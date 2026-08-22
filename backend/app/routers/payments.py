@@ -1,9 +1,11 @@
-"""Payment endpoints: transfer and redeem, with AML-lite checks.
+"""Payment endpoints: transfer by account number, redeem — with AML + bank permissions.
 
 Before proxying to the token services, the backend enforces:
   - sender account must be `active`
-  - per-transfer amount <= the account's transfer limit
-These are demo-level checks; on-chain enforcement is deferred to Phase 4.
+  - recipient must not be `frozen`
+  - amount within the account's transfer limit
+  - for cross-bank transfers, within the bank's interbank limit
+  - redeem requires the bank's `can_redeem` permission
 """
 from __future__ import annotations
 
@@ -13,37 +15,54 @@ from sqlalchemy.orm import Session
 
 from ..amounts import to_minor
 from ..database import get_session
-from ..models import Customer, TransactionLog
+from ..deps import bank_staff
+from ..models import Account, TransactionLog, User
 from ..schemas import RedeemRequest, TransferRequest, TxLogRead
 from ..token_client import TokenServiceError, token_client
 
 router = APIRouter(prefix="/api/v1", tags=["payments"])
 
 
+def _get_account(session: Session, account_number: str) -> Account:
+    account = session.scalar(select(Account).where(Account.account_number == account_number))
+    if account is None:
+        raise HTTPException(404, f"account '{account_number}' not found")
+    return account
+
+
+def _check_access(user: User, account: Account) -> None:
+    if user.role == "customer" and user.account_number != account.account_number:
+        raise HTTPException(403, "not your account")
+    if user.role == "bank_staff" and account.bank_code != user.bank_code:
+        raise HTTPException(403, "account is not on your bank")
+
+
 @router.post("/payments/transfer", response_model=TxLogRead)
-async def transfer(body: TransferRequest, session: Session = Depends(get_session)):
-    sender = session.scalar(
-        select(Customer).where(Customer.wallet == body.from_wallet)
-    )
-    if sender is None:
-        raise HTTPException(404, f"sender wallet '{body.from_wallet}' not registered")
+async def transfer(
+    body: TransferRequest,
+    user: User = Depends(bank_staff),
+    session: Session = Depends(get_session),
+):
+    sender = _get_account(session, body.from_account)
+    _check_access(user, sender)
+    recipient = _get_account(session, body.to_account)
 
     if sender.status != "active":
-        raise HTTPException(403, f"account '{sender.username}' is {sender.status}")
+        raise HTTPException(403, f"account {sender.account_number} is {sender.status}")
+    if recipient.status == "frozen":
+        raise HTTPException(403, f"recipient {recipient.account_number} is frozen")
 
     amount_minor = to_minor(body.amount)
     if amount_minor > sender.transfer_limit_minor:
-        raise HTTPException(
-            403,
-            f"amount {body.amount} SWR exceeds transfer limit "
-            f"({sender.transfer_limit_minor / 100:.2f} SWR)",
-        )
+        raise HTTPException(403, f"amount exceeds the account transfer limit")
 
-    recipient = session.scalar(
-        select(Customer).where(Customer.wallet == body.to_wallet)
-    )
-    if recipient is None:
-        raise HTTPException(404, f"recipient wallet '{body.to_wallet}' not registered")
+    is_interbank = sender.bank_code != recipient.bank_code
+    if is_interbank:
+        limit = sender.bank.permissions.get("interbank_limit_minor", 0)
+        if limit and amount_minor > limit:
+            raise HTTPException(
+                403, f"amount exceeds {sender.bank.name}'s interbank limit"
+            )
 
     try:
         txid = await token_client.transfer(
@@ -52,7 +71,7 @@ async def transfer(body: TransferRequest, session: Session = Depends(get_session
             to_wallet=recipient.wallet,
             to_node=recipient.owner_node,
             amount_minor=amount_minor,
-            message=body.message,
+            message=body.reference,
         )
     except TokenServiceError as exc:
         raise HTTPException(502, f"token service error: {exc}") from exc
@@ -60,10 +79,10 @@ async def transfer(body: TransferRequest, session: Session = Depends(get_session
     log = TransactionLog(
         txid=txid,
         tx_type="transfer",
-        from_wallet=sender.wallet,
-        to_wallet=recipient.wallet,
+        from_account=sender.account_number,
+        to_account=recipient.account_number,
         amount_minor=amount_minor,
-        message=body.message,
+        reference=body.reference,
     )
     session.add(log)
     session.commit()
@@ -72,20 +91,32 @@ async def transfer(body: TransferRequest, session: Session = Depends(get_session
 
 
 @router.post("/payments/redeem", response_model=TxLogRead)
-async def redeem(body: RedeemRequest, session: Session = Depends(get_session)):
-    customer = session.scalar(select(Customer).where(Customer.wallet == body.wallet))
-    if customer is None:
-        raise HTTPException(404, f"wallet '{body.wallet}' not registered")
-    if customer.status != "active":
-        raise HTTPException(403, f"account '{customer.username}' is {customer.status}")
+async def redeem(
+    body: RedeemRequest,
+    user: User = Depends(bank_staff),
+    session: Session = Depends(get_session),
+):
+    account = _get_account(session, body.account)
+    _check_access(user, account)
+
+    if account.status != "active":
+        raise HTTPException(403, f"account {account.account_number} is {account.status}")
+
+    bank = account.bank
+    if not bank.permissions.get("can_redeem", False):
+        raise HTTPException(403, f"bank {bank.name} is not allowed to redeem")
 
     amount_minor = to_minor(body.amount)
+    redeem_limit = bank.permissions.get("redeem_limit_minor", 0)
+    if redeem_limit and amount_minor > redeem_limit:
+        raise HTTPException(403, f"amount exceeds {bank.name}'s redeem limit")
+
     try:
         txid = await token_client.redeem(
-            wallet=customer.wallet,
-            node=customer.owner_node,
+            wallet=account.wallet,
+            node=account.owner_node,
             amount_minor=amount_minor,
-            message=body.message,
+            message=body.reference,
         )
     except TokenServiceError as exc:
         raise HTTPException(502, f"token service error: {exc}") from exc
@@ -93,9 +124,9 @@ async def redeem(body: RedeemRequest, session: Session = Depends(get_session)):
     log = TransactionLog(
         txid=txid,
         tx_type="redeem",
-        from_wallet=customer.wallet,
+        from_account=account.account_number,
         amount_minor=amount_minor,
-        message=body.message,
+        reference=body.reference,
     )
     session.add(log)
     session.commit()

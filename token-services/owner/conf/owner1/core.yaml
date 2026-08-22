@@ -109,6 +109,27 @@ token:
           - id: bob
             path: /var/fsc/keys/owner1/wallet/bob/msp
 
+          - id: pool_w1
+            path: /var/fsc/keys/owner1/wallet/pool_w1/msp
+          - id: pool_w2
+            path: /var/fsc/keys/owner1/wallet/pool_w2/msp
+          - id: pool_w3
+            path: /var/fsc/keys/owner1/wallet/pool_w3/msp
+          - id: pool_w4
+            path: /var/fsc/keys/owner1/wallet/pool_w4/msp
+          - id: pool_w5
+            path: /var/fsc/keys/owner1/wallet/pool_w5/msp
+          - id: pool_w6
+            path: /var/fsc/keys/owner1/wallet/pool_w6/msp
+          - id: pool_w7
+            path: /var/fsc/keys/owner1/wallet/pool_w7/msp
+          - id: pool_w8
+            path: /var/fsc/keys/owner1/wallet/pool_w8/msp
+          - id: pool_w9
+            path: /var/fsc/keys/owner1/wallet/pool_w9/msp
+          - id: pool_w10
+            path: /var/fsc/keys/owner1/wallet/pool_w10/msp
+
   # Internal database to keep track of token transactions. 
   # It is used by auditors and token owners to track history
   ttxdb:

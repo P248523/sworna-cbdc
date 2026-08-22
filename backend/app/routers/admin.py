@@ -1,8 +1,4 @@
-"""Central-bank admin endpoints: issue, redeem oversight, supply, circulation.
-
-The token network itself decides issue/transfer/redeem validity (ZK proofs +
-auditor signature). The backend adds the CB-facing reporting view.
-"""
+"""Central-bank admin endpoints: issue, provisioning, supply, circulation, ledger."""
 from __future__ import annotations
 
 import json
@@ -12,12 +8,14 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..amounts import to_minor, to_swr
 from ..database import get_session
-from ..models import Bank, Customer, TransactionLog
+from ..deps import cb_admin
+from ..models import Account, Bank, TransactionLog, User
+from ..provisioning import ProvisioningError, provision_wallet_pool
 from ..schemas import AdminOverview, CirculationRow, IssueRequest, TxLogRead
 from ..token_client import TokenServiceError, token_client
 
@@ -34,6 +32,15 @@ class LedgerStatus(BaseModel):
     channel: str
     height: int
     blocks: list[BlockSummary]
+
+
+class ProvisionResult(BaseModel):
+    bank_code: str
+    bank_name: str
+    owner_node: str
+    wallets_generated: int
+    used: int
+    free: int
 
 
 def _peer_env() -> dict:
@@ -59,8 +66,110 @@ def _peer_env() -> dict:
     return env
 
 
+@router.post("/admin/issue", response_model=TxLogRead, status_code=201)
+async def issue(
+    body: IssueRequest,
+    user: User = Depends(cb_admin),
+    session: Session = Depends(get_session),
+):
+    account = session.scalar(select(Account).where(Account.account_number == body.to_account))
+    if account is None:
+        raise HTTPException(404, f"account '{body.to_account}' not found")
+
+    amount_minor = to_minor(body.amount)
+    try:
+        txid = await token_client.issue(
+            amount_minor=amount_minor,
+            node=account.owner_node,
+            wallet=account.wallet,
+            message=body.reference,
+        )
+    except TokenServiceError as exc:
+        raise HTTPException(502, f"token service error: {exc}") from exc
+
+    log = TransactionLog(
+        txid=txid,
+        tx_type="issue",
+        to_account=account.account_number,
+        amount_minor=amount_minor,
+        reference=body.reference,
+    )
+    session.add(log)
+    session.commit()
+    session.refresh(log)
+    return log
+
+
+@router.post("/admin/banks/{code}/provision", response_model=ProvisionResult)
+async def provision_bank_keys(
+    code: str,
+    user: User = Depends(cb_admin),
+    session: Session = Depends(get_session),
+):
+    """Generate (top up) the bank's wallet pool via the token CA."""
+    bank = session.scalar(select(Bank).where(Bank.code == code))
+    if bank is None:
+        raise HTTPException(404, "bank not found")
+    try:
+        provision_wallet_pool(bank)
+    except ProvisioningError as exc:
+        raise HTTPException(502, f"provisioning failed: {exc}") from exc
+    session.commit()
+    session.refresh(bank)
+    used = len(bank.wallet_pool.get("used", []))
+    free = len(bank.wallet_pool.get("free", []))
+    return ProvisionResult(
+        bank_code=bank.code,
+        bank_name=bank.name,
+        owner_node=bank.owner_node,
+        wallets_generated=used + free,
+        used=used,
+        free=free,
+    )
+
+
+@router.get("/admin/transactions", response_model=list[TxLogRead])
+def list_transactions(
+    limit: int = 50,
+    user: User = Depends(cb_admin),
+    session: Session = Depends(get_session),
+):
+    return session.scalars(
+        select(TransactionLog).order_by(TransactionLog.id.desc()).limit(limit)
+    ).all()
+
+
+@router.get("/admin/overview", response_model=AdminOverview)
+async def overview(user: User = Depends(cb_admin), session: Session = Depends(get_session)):
+    banks = session.scalars(select(Bank).order_by(Bank.code)).all()
+    rows: list[CirculationRow] = []
+    total_minor = 0
+    for bank in banks:
+        accounts = session.scalars(select(Account).where(Account.bank_id == bank.id)).all()
+        bank_minor = 0
+        for account in accounts:
+            try:
+                bank_minor += await token_client.balances(
+                    wallet=account.wallet, node=bank.owner_node
+                )
+            except TokenServiceError:
+                continue
+        total_minor += bank_minor
+        rows.append(
+            CirculationRow(
+                bank_code=bank.code,
+                bank_name=bank.name,
+                status=bank.status,
+                total_minor=bank_minor,
+                total=to_swr(bank_minor),
+                account_count=len(accounts),
+            )
+        )
+    return AdminOverview(total_supply=to_swr(total_minor), circulation=rows)
+
+
 @router.get("/admin/ledger", response_model=LedgerStatus)
-def ledger_status(limit: int = 5):
+def ledger_status(limit: int = 5, user: User = Depends(cb_admin)):
     env = _peer_env()
     channel = "settlement"
     try:
@@ -103,8 +212,7 @@ def ledger_status(limit: int = 5):
             txs = data.get("data", {}).get("data", [])
             txids = []
             for tx in txs:
-                payload = tx.get("payload", {})
-                ch = payload.get("header", {}).get("channel_header", {})
+                ch = tx.get("payload", {}).get("header", {}).get("channel_header", {})
                 tid = ch.get("tx_id", "")
                 if tid:
                     txids.append(tid)
@@ -113,74 +221,3 @@ def ledger_status(limit: int = 5):
             continue
 
     return LedgerStatus(channel=channel, height=height, blocks=blocks)
-
-
-@router.post("/admin/issue", response_model=TxLogRead, status_code=201)
-async def issue(body: IssueRequest, session: Session = Depends(get_session)):
-    bank = session.scalar(select(Bank).where(Bank.name == body.bank_name))
-    if bank is None:
-        raise HTTPException(404, f"bank '{body.bank_name}' not found")
-    customer = session.scalar(
-        select(Customer).where(Customer.wallet == body.recipient_wallet)
-    )
-    if customer is None or customer.bank_id != bank.id:
-        raise HTTPException(404, f"wallet '{body.recipient_wallet}' not on {bank.name}")
-
-    amount_minor = to_minor(body.amount)
-    try:
-        txid = await token_client.issue(
-            amount_minor=amount_minor,
-            node=bank.owner_node,
-            wallet=customer.wallet,
-            message=body.message,
-        )
-    except TokenServiceError as exc:
-        raise HTTPException(502, f"token service error: {exc}") from exc
-
-    log = TransactionLog(
-        txid=txid,
-        tx_type="issue",
-        to_wallet=customer.wallet,
-        amount_minor=amount_minor,
-        message=body.message,
-    )
-    session.add(log)
-    session.commit()
-    session.refresh(log)
-    return log
-
-
-@router.get("/admin/transactions", response_model=list[TxLogRead])
-def list_transactions(limit: int = 50, session: Session = Depends(get_session)):
-    return session.scalars(
-        select(TransactionLog).order_by(TransactionLog.id.desc()).limit(limit)
-    ).all()
-
-
-@router.get("/admin/overview", response_model=AdminOverview)
-async def overview(session: Session = Depends(get_session)):
-    banks = session.scalars(select(Bank).order_by(Bank.id)).all()
-    rows: list[CirculationRow] = []
-    total_minor = 0
-    for bank in banks:
-        customers = session.scalars(
-            select(Customer).where(Customer.bank_id == bank.id)
-        ).all()
-        bank_minor = 0
-        for customer in customers:
-            try:
-                bank_minor += await token_client.balances(
-                    wallet=customer.wallet, node=bank.owner_node
-                )
-            except TokenServiceError:
-                continue
-        total_minor += bank_minor
-        rows.append(
-            CirculationRow(
-                bank_name=bank.name,
-                owner_node=bank.owner_node,
-                total_minor=bank_minor,
-                total=to_swr(bank_minor),
-            )
-        )
-    return AdminOverview(total_supply=to_swr(total_minor), circulation=rows)

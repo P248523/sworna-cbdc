@@ -109,6 +109,27 @@ token:
           - id: dan
             path: /var/fsc/keys/owner2/wallet/dan/msp
 
+          - id: pool_b2_w1
+            path: /var/fsc/keys/owner2/wallet/pool_b2_w1/msp
+          - id: pool_b2_w2
+            path: /var/fsc/keys/owner2/wallet/pool_b2_w2/msp
+          - id: pool_b2_w3
+            path: /var/fsc/keys/owner2/wallet/pool_b2_w3/msp
+          - id: pool_b2_w4
+            path: /var/fsc/keys/owner2/wallet/pool_b2_w4/msp
+          - id: pool_b2_w5
+            path: /var/fsc/keys/owner2/wallet/pool_b2_w5/msp
+          - id: pool_b2_w6
+            path: /var/fsc/keys/owner2/wallet/pool_b2_w6/msp
+          - id: pool_b2_w7
+            path: /var/fsc/keys/owner2/wallet/pool_b2_w7/msp
+          - id: pool_b2_w8
+            path: /var/fsc/keys/owner2/wallet/pool_b2_w8/msp
+          - id: pool_b2_w9
+            path: /var/fsc/keys/owner2/wallet/pool_b2_w9/msp
+          - id: pool_b2_w10
+            path: /var/fsc/keys/owner2/wallet/pool_b2_w10/msp
+
   # Internal database to keep track of token transactions. 
   # It is used by auditors and token owners to track history
   ttxdb:

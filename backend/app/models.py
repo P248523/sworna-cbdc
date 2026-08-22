@@ -1,14 +1,14 @@
-"""SQLAlchemy models for the Sworna banking registry.
+"""SQLAlchemy models for the Sworna banking system.
 
-Stores the off-chain banking view (banks, customers, accounts, transaction
-log). Token balances themselves live on the Fabric ledger; the backend only
-keeps registry + AML data and mirrors transactions for reporting.
+The registry stores the off-chain banking view (banks, accounts, users,
+payments). Token balances live on the Fabric ledger; the backend keeps the
+banking registry + AML data and mirrors payments for reporting.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -24,25 +24,42 @@ class Bank(Base):
     __tablename__ = "banks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(3), unique=True, index=True)  # "001"...
     name: Mapped[str] = mapped_column(String(50), unique=True, index=True)  # banka, bankb
-    owner_node: Mapped[str] = mapped_column(String(50))  # owner1, owner2
+    msp_id: Mapped[str] = mapped_column(String(50))  # BankAMSP...
+    owner_node: Mapped[str] = mapped_column(String(50))  # owner1...
+    portal_url: Mapped[str] = mapped_column(String(200), default="")
+    status: Mapped[str] = mapped_column(String(20), default="registered")  # registered | active | suspended
+    # permissions: {can_redeem: bool, interbank_limit_minor: int, redeem_limit_minor: int}
+    permissions: Mapped[dict] = mapped_column(JSON, default=dict)
+    pool_size: Mapped[int] = mapped_column(Integer, default=10)
+    # wallet pool manifest: {used: [wallet ids], free: [wallet ids]}
+    wallet_pool: Mapped[dict] = mapped_column(JSON, default=dict)
+    joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    customers: Mapped[list["Customer"]] = relationship(back_populates="bank")
+    accounts: Mapped[list["Account"]] = relationship(back_populates="bank")
+
+    @property
+    def bank_name(self) -> str:
+        return self.name
 
 
-class Customer(Base):
-    __tablename__ = "customers"
+class Account(Base):
+    """A customer's bank account. Its on-chain identity is the idemix wallet."""
+
+    __tablename__ = "accounts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    username: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    account_number: Mapped[str] = mapped_column(String(20), unique=True, index=True)  # SWR-001-00001234
     full_name: Mapped[str] = mapped_column(String(120))
-    wallet: Mapped[str] = mapped_column(String(50), unique=True, index=True)  # idemix wallet on the owner node
+    wallet: Mapped[str] = mapped_column(String(60), unique=True, index=True)  # idemix wallet on the owner node
     status: Mapped[str] = mapped_column(String(20), default="active")  # active | flagged | frozen
-    transfer_limit_minor: Mapped[int] = mapped_column(Integer, default=50000)  # SWR minor units
+    kyc_level: Mapped[int] = mapped_column(Integer, default=1)
+    transfer_limit_minor: Mapped[int] = mapped_column(Integer, default=100000)  # SWR minor units
     bank_id: Mapped[int] = mapped_column(ForeignKey("banks.id"))
 
-    bank: Mapped["Bank"] = relationship(back_populates="customers")
+    bank: Mapped["Bank"] = relationship(back_populates="accounts")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     @property
@@ -50,20 +67,46 @@ class Customer(Base):
         return self.bank.owner_node
 
     @property
+    def bank_code(self) -> str:
+        return self.bank.code
+
+    @property
     def bank_name(self) -> str:
         return self.bank.name
 
+    @property
+    def transfer_limit(self):
+        from .amounts import to_swr
+
+        return to_swr(self.transfer_limit_minor)
+
+
+class User(Base):
+    """Login identity. Roles: cb_admin | bank_staff | customer."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(200))
+    role: Mapped[str] = mapped_column(String(20))  # cb_admin | bank_staff | customer
+    bank_code: Mapped[str | None] = mapped_column(String(3), nullable=True)  # for bank_staff
+    account_number: Mapped[str | None] = mapped_column(String(20), nullable=True)  # for customer
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
 
 class TransactionLog(Base):
+    """Off-chain mirror of ledger activity, in banking terms."""
+
     __tablename__ = "transaction_log"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     txid: Mapped[str] = mapped_column(String(100), index=True)
     tx_type: Mapped[str] = mapped_column(String(20))  # issue | transfer | redeem
-    from_wallet: Mapped[str] = mapped_column(String(50), default="")
-    to_wallet: Mapped[str] = mapped_column(String(50), default="")
+    from_account: Mapped[str] = mapped_column(String(20), default="")
+    to_account: Mapped[str] = mapped_column(String(20), default="")
     amount_minor: Mapped[int] = mapped_column(Integer)
-    message: Mapped[str] = mapped_column(String(255), default="")
+    reference: Mapped[str] = mapped_column(String(255), default="")
     status: Mapped[str] = mapped_column(String(20), default="Confirmed")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

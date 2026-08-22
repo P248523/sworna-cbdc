@@ -1,126 +1,250 @@
-"""Bank + customer registry endpoints."""
+"""Bank + account registry endpoints, scoped by role."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..accounts import generate_account_number
 from ..amounts import to_swr
 from ..database import get_session
-from ..models import Bank, Customer
-from ..schemas import BankCreate, BankRead, CustomerCreate, CustomerRead, StatusUpdate
+from ..deps import bank_staff, cb_admin, customer
+from ..models import Account, Bank, User
+from ..provisioning import ProvisioningError, assign_wallet
+from ..schemas import (
+    AccountCreate,
+    AccountRead,
+    BalanceRead,
+    BankCreate,
+    BankPermissionsUpdate,
+    BankRead,
+    BankStatusUpdate,
+    StatementItem,
+    StatusUpdate,
+)
+from ..security import hash_password
 from ..token_client import TokenServiceError, token_client
 
 router = APIRouter(prefix="/api/v1", tags=["registry"])
 
 
-class BalanceRead(BaseModel):
-    username: str
-    wallet: str
-    bank_name: str
-    balance: str  # SWR, major units
-
-
-class HistoryItem(BaseModel):
-    txid: str
-    amount: int
-    message: str
-    sender: str
-    recipient: str
-    status: str
-    timestamp: str
-
-
+# -- banks ----------------------------------------------------------------
 @router.get("/banks", response_model=list[BankRead])
-def list_banks(session: Session = Depends(get_session)):
-    return session.scalars(select(Bank).order_by(Bank.id)).all()
+def list_banks(user: User = Depends(bank_staff), session: Session = Depends(get_session)):
+    stmt = select(Bank).order_by(Bank.id)
+    if user.role == "bank_staff":
+        stmt = stmt.where(Bank.code == user.bank_code)
+    return session.scalars(stmt).all()
 
 
 @router.post("/banks", response_model=BankRead, status_code=201)
-def create_bank(body: BankCreate, session: Session = Depends(get_session)):
-    existing = session.scalar(select(Bank).where(Bank.name == body.name))
-    if existing:
-        raise HTTPException(409, f"bank '{body.name}' already exists")
-    bank = Bank(name=body.name, owner_node=body.owner_node)
+def create_bank(
+    body: BankCreate,
+    user: User = Depends(cb_admin),
+    session: Session = Depends(get_session),
+):
+    if session.scalar(select(Bank).where(Bank.code == body.code)):
+        raise HTTPException(409, f"bank code {body.code} already in use")
+    if session.scalar(select(Bank).where(Bank.name == body.name)):
+        raise HTTPException(409, f"bank name '{body.name}' already in use")
+    bank = Bank(
+        code=body.code,
+        name=body.name,
+        msp_id=body.msp_id,
+        owner_node=body.owner_node,
+        portal_url=body.portal_url,
+        status="registered",
+        permissions=body.permissions.model_dump(),
+        pool_size=body.pool_size,
+        wallet_pool={"used": [], "free": []},
+    )
     session.add(bank)
     session.commit()
     session.refresh(bank)
     return bank
 
 
-@router.get("/customers", response_model=list[CustomerRead])
-def list_customers(session: Session = Depends(get_session)):
-    return session.scalars(select(Customer).order_by(Customer.id)).all()
-
-
-@router.post("/customers", response_model=CustomerRead, status_code=201)
-def create_customer(body: CustomerCreate, session: Session = Depends(get_session)):
-    bank = session.get(Bank, body.bank_id)
+@router.patch("/banks/{code}/status", response_model=BankRead)
+def set_bank_status(
+    code: str,
+    body: BankStatusUpdate,
+    user: User = Depends(cb_admin),
+    session: Session = Depends(get_session),
+):
+    bank = session.scalar(select(Bank).where(Bank.code == code))
     if bank is None:
         raise HTTPException(404, "bank not found")
-    if session.scalar(select(Customer).where(Customer.wallet == body.wallet)):
-        raise HTTPException(409, f"wallet '{body.wallet}' already registered")
-    customer = Customer(
-        username=body.username,
-        full_name=body.full_name,
-        wallet=body.wallet,
-        bank_id=body.bank_id,
-    )
-    session.add(customer)
+    bank.status = body.status
+    if body.status == "active" and bank.joined_at is None:
+        from .models import utcnow
+
+        bank.joined_at = utcnow()
     session.commit()
-    session.refresh(customer)
-    return customer
+    session.refresh(bank)
+    return bank
 
 
-@router.patch("/customers/{username}/status", response_model=CustomerRead)
-def update_status(
-    username: str, body: StatusUpdate, session: Session = Depends(get_session)
+@router.patch("/banks/{code}/permissions", response_model=BankRead)
+def set_bank_permissions(
+    code: str,
+    body: BankPermissionsUpdate,
+    user: User = Depends(cb_admin),
+    session: Session = Depends(get_session),
 ):
-    customer = session.scalar(select(Customer).where(Customer.username == username))
-    if customer is None:
-        raise HTTPException(404, "customer not found")
-    customer.status = body.status
+    bank = session.scalar(select(Bank).where(Bank.code == code))
+    if bank is None:
+        raise HTTPException(404, "bank not found")
+    bank.permissions = body.permissions.model_dump()
     session.commit()
-    session.refresh(customer)
-    return customer
+    session.refresh(bank)
+    return bank
 
 
-@router.get("/customers/{username}/balance", response_model=BalanceRead)
-async def customer_balance(username: str, session: Session = Depends(get_session)):
-    customer = session.scalar(select(Customer).where(Customer.username == username))
-    if customer is None:
-        raise HTTPException(404, "customer not found")
+# -- accounts ------------------------------------------------------------
+def _scoped_accounts(user: User, session: Session):
+    stmt = select(Account).order_by(Account.id)
+    if user.role == "bank_staff":
+        stmt = stmt.join(Bank).where(Bank.code == user.bank_code)
+    elif user.role == "customer":
+        stmt = stmt.where(Account.account_number == user.account_number)
+    return stmt
+
+
+@router.get("/accounts", response_model=list[AccountRead])
+def list_accounts(user: User = Depends(bank_staff), session: Session = Depends(get_session)):
+    return session.scalars(_scoped_accounts(user, session)).all()
+
+
+@router.post("/accounts", response_model=AccountRead, status_code=201)
+def create_account(
+    body: AccountCreate,
+    user: User = Depends(bank_staff),
+    session: Session = Depends(get_session),
+):
+    bank = session.scalar(select(Bank).where(Bank.code == user.bank_code))
+    if bank is None:
+        raise HTTPException(404, "bank not found")
+
+    if session.scalar(select(User).where(User.username == body.username)):
+        raise HTTPException(409, f"username '{body.username}' taken")
+
     try:
-        minor = await token_client.balances(
-            wallet=customer.wallet, node=customer.owner_node
+        wallet = assign_wallet(bank)
+    except ProvisioningError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    existing = session.execute(
+        select(Account.account_number).where(Account.bank_id == bank.id)
+    ).scalars().all()
+    next_seq = 1
+    if existing:
+        next_seq = max(int(a.split("-")[2]) for a in existing) + 1
+
+    account = Account(
+        account_number=generate_account_number(bank.code, next_seq),
+        full_name=body.full_name,
+        wallet=wallet,
+        bank_id=bank.id,
+        kyc_level=body.kyc_level,
+        transfer_limit_minor=int(body.transfer_limit * 100),
+    )
+    session.add(account)
+    session.flush()
+    session.add(
+        User(
+            username=body.username,
+            password_hash=hash_password(body.password),
+            role="customer",
+            bank_code=bank.code,
+            account_number=account.account_number,
         )
+    )
+    session.commit()
+    session.refresh(account)
+    return account
+
+
+@router.get("/accounts/{account_number}", response_model=AccountRead)
+def get_account(
+    account_number: str,
+    user: User = Depends(bank_staff),
+    session: Session = Depends(get_session),
+):
+    account = session.scalar(select(Account).where(Account.account_number == account_number))
+    if account is None:
+        raise HTTPException(404, f"account '{account_number}' not found")
+    if user.role == "bank_staff" and account.bank_code != user.bank_code:
+        raise HTTPException(403, "account is not on your bank")
+    return account
+
+
+@router.patch("/accounts/{account_number}/status", response_model=AccountRead)
+def set_account_status(
+    account_number: str,
+    body: StatusUpdate,
+    user: User = Depends(bank_staff),
+    session: Session = Depends(get_session),
+):
+    account = session.scalar(select(Account).where(Account.account_number == account_number))
+    if account is None:
+        raise HTTPException(404, "account not found")
+    if user.role == "bank_staff" and account.bank_code != user.bank_code:
+        raise HTTPException(403, "account is not on your bank")
+    account.status = body.status
+    session.commit()
+    session.refresh(account)
+    return account
+
+
+@router.get("/accounts/{account_number}/balance", response_model=BalanceRead)
+async def account_balance(
+    account_number: str,
+    user: User = Depends(customer),
+    session: Session = Depends(get_session),
+):
+    account = session.scalar(select(Account).where(Account.account_number == account_number))
+    if account is None:
+        raise HTTPException(404, f"account '{account_number}' not found")
+    if user.role == "bank_staff" and account.bank_code != user.bank_code:
+        raise HTTPException(403, "account is not on your bank")
+    if user.role == "customer" and user.account_number != account_number:
+        raise HTTPException(403, "not your account")
+    try:
+        minor = await token_client.balances(wallet=account.wallet, node=account.owner_node)
     except TokenServiceError as exc:
         raise HTTPException(502, f"token service error: {exc}") from exc
     return BalanceRead(
-        username=customer.username,
-        wallet=customer.wallet,
-        bank_name=customer.bank.name,
+        account_number=account.account_number,
+        full_name=account.full_name,
+        bank_code=account.bank_code,
         balance=str(to_swr(minor)),
     )
 
 
-@router.get("/customers/{username}/transactions", response_model=list[HistoryItem])
-async def customer_transactions(username: str, session: Session = Depends(get_session)):
-    customer = session.scalar(select(Customer).where(Customer.username == username))
-    if customer is None:
-        raise HTTPException(404, "customer not found")
+@router.get("/accounts/{account_number}/statements", response_model=list[StatementItem])
+async def account_statements(
+    account_number: str,
+    user: User = Depends(customer),
+    session: Session = Depends(get_session),
+):
+    account = session.scalar(select(Account).where(Account.account_number == account_number))
+    if account is None:
+        raise HTTPException(404, f"account '{account_number}' not found")
+    if user.role == "bank_staff" and account.bank_code != user.bank_code:
+        raise HTTPException(403, "account is not on your bank")
+    if user.role == "customer" and user.account_number != account_number:
+        raise HTTPException(403, "not your account")
     try:
-        history = await token_client.auditor_history(customer.wallet)
+        history = await token_client.auditor_history(account.wallet)
     except TokenServiceError as exc:
         raise HTTPException(502, f"token service error: {exc}") from exc
-    items: list[HistoryItem] = []
+    items: list[StatementItem] = []
     for tx in history:
         items.append(
-            HistoryItem(
+            StatementItem(
                 txid=tx.get("id", ""),
                 amount=int(tx.get("amount", {}).get("value", 0)),
-                message=tx.get("message", ""),
+                reference=tx.get("message", ""),
                 sender=tx.get("sender", ""),
                 recipient=tx.get("recipient", ""),
                 status=tx.get("status", ""),
