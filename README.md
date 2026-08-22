@@ -2,7 +2,7 @@
 
 **Sworna** is a prototype Central Bank Digital Currency (CBDC) system built on **Hyperledger Fabric**, modeling a two-tier retail + wholesale payment system for the **Nepali rupee** concept. The currency is represented on-ledger as **UTXO tokens protected by Zero-Knowledge Proofs** — amounts and parties remain hidden to the ledger while remaining provably valid, with a central-bank-operated **auditor** enforcing oversight.
 
-> **Project status: Phase 1 done, Phase 2 (de-risking) complete.** The token-sdk stack is verified end-to-end on a dev laptop (Fabric v3.1.5). See [Phase 2 report](#phase-2--de-risking-report) below and [docs/PHASES.md](docs/PHASES.md).
+> **Project status: Phase 3 prototype — working on the dev laptop.** A 3-organization Fabric network (central bank + Bank A + Bank B) with ZK-private SWR tokens, a Python FastAPI banking core, and a React UI. See [docs/token-network/](docs/token-network/) and the [bring-up notes](#running-the-stack).
 
 ---
 
@@ -62,6 +62,38 @@ The `hyperledger-labs/blockchain-explorer` (used by the sample on `:8081`) **doe
 3. Pin peers/orderers to Fabric v2.5.9 for explorer-only runs — contradicts the v3.1.x decision; not recommended.
 
 Recommendation: **Option 1** for the Phase-3 demo.
+
+---
+
+## Phase 3 — running the stack
+
+Everything is owned in this repo. Bring-up (all-in-one dev laptop):
+
+```bash
+# 1. binaries/images (one-time): fabric-samples/bin + config + images, plus
+#    `bin` and `config` symlinks at the repo root, and `tokengen` in ~/go/bin.
+
+# 2. our 3-org network (centralbank + banka), channel `settlement`
+./network/network.sh up createChannel -ca
+#    bankb joins the channel
+./network/addOrg3/addOrg3.sh up
+#    deploy the ZK token chaincode to all 3 orgs
+./network/network.sh deployCCAAS -ccn tokenchaincode \
+    -ccp token-services/tokenchaincode -cci init -ccs 1
+
+# 3. token engine (issuer/auditor/owner) wired to our network
+#    (first generate identities: see docs/token-network/05)
+cd token-services && docker-compose up -d --build
+
+# 4. banking core + UI
+cd backend && .venv/bin/uvicorn app.main:app --port 8000 &
+cd web && npm run dev            # http://localhost:5173
+
+# 5. demo scenario
+./scripts/demo.sh
+```
+
+See [docs/DEMO.md](docs/DEMO.md) for the runbook and [docs/token-network/](docs/token-network/) for how the token network works.
 
 ---
 

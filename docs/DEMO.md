@@ -1,41 +1,60 @@
 # DEMO — Scenario & runbook
 
-> **Status: STUB.** This document is completed during the prototype phase (Phase 3). It captures the agreed demo outline now; the runbook details are filled in once the network and services exist.
+> **Status: COMPLETE (Phase 3).** Verified on the dev laptop 2026-08-22.
 
 ## Demo objective
 
-A guided ~10-minute walkthrough showing the full two-tier model:
+A guided ~10-minute walkthrough of the full two-tier model with ZK privacy:
 
 1. **Central bank issues** SWR to the commercial banks.
 2. **Customers** send payments, including a **cross-bank** transfer.
 3. **Central bank redeems** SWR.
-4. On-screen: customer wallet, central-bank admin console, and the blockchain explorer showing committed blocks [R13].
+4. On-screen: customer wallet, central-bank console (with a live **ledger
+   monitor** replacing the v3-incompatible explorer), and balances.
 
-## Scenario script (draft)
+## Scenario script
 
 | Step | Actor | Action | Evidence on screen |
 |---|---|---|---|
-| 1 | CB admin | Issue 10,000 SWR to bank A, 10,000 SWR to bank B | Admin console shows per-bank circulation; explorer shows the issue tx |
-| 2 | alice (bank A) | Pay bob 250 SWR (intra-bank) | Wallet balances update; history shows UTXO change-splitting |
-| 3 | bob (bank A) | Pay carol (bank B) 100 SWR (cross-bank) | Both banks' balances update after commit |
-| 4 | dan (bank B) | Check balance / history | Wallet history |
-| 5 | CB admin | Redeem 500 SWR from bank B | Supply drops; explorer shows the redeem/burn tx |
-| 6 | Optional | Toggle a customer status to `flagged`; attempt a transfer over the limit and show rejection | Admin + wallet behavior |
+| 1 | CB admin | Issue 100.00 SWR to each customer via the console | Admin console: total supply + per-bank circulation update |
+| 2 | alice (banka) | Pay bob 20.00 SWR (intra-bank) | Wallet balances + history update |
+| 3 | bob (banka) | Pay carlos (bankb) 5.00 SWR (cross-bank) | Both banks' balances update after commit |
+| 4 | carlos (bankb) | Pay dan 2.50 SWR (cross-bank) | History shows UTXO change-splitting |
+| 5 | dan (bankb) | Redeem 1.00 SWR | Supply drops; ledger monitor shows a new block |
+| 6 | CB admin | Toggle bob to `frozen`; attempt a transfer → rejected 403 | Bank console + wallet behaviour |
+| 7 | Auditor | Open any account's history | Full amounts + parties visible (the privileged ZK view) |
 
-## Seed data
+## Running it
 
-- Customers: alice, bob (bank A); carol, dan (bank B).
-- Initial balances: bank A 10,000 SWR, bank B 10,000 SWR.
-- SWR token: code `SWR`, symbol `रू`, 2 decimal places.
+```bash
+# 0. bring up the stack (see README "Running the stack")
+# 1. reset + run the demo scenario:
+./scripts/demo.sh
+# 2. open the UI
+#    http://localhost:5173   (wallet / bank / central-bank tabs)
+#    http://localhost:8080   (token-engine API docs)
+```
 
-## Runbook (to be completed in Phase 3)
+## Port map
 
-- [ ] Prerequisites and pinned versions (see README).
-- [ ] One-command network bring-up (`up`/`down` scripts).
-- [ ] Seed script: reset + issue + distribute + transfers + redeem.
-- [ ] Port mapping table (token services, FastAPI, React, explorer) [R13].
-- [ ] Troubleshooting checklist.
+| Port | Service |
+|---|---|
+| 7050 | orderer |
+| 7051 / 9051 / 11051 | peers (centralbank / banka / bankb) |
+| 7054 / 8054 / 9054 | Fabric CAs |
+| 27054 | token CA |
+| 9000 / 9100 / 9200 / 9300 | auditor / issuer / owner1 / owner2 |
+| 8000 | FastAPI backend |
+| 5173 | React UI (dev) |
 
-## References
+## Troubleshooting
 
-- token-sdk sample startup (`./scripts/up.sh`, `down.sh`, ports, explorer): https://github.com/hyperledger/fabric-samples/tree/main/token-sdk [R13]
+- **`can't get session` / `communication service not ready`** — the FSC nodes
+  need a moment to join the bootstrap (auditor) after restart; wait ~20 s and
+  retry.
+- **Auditor unhealthy on start** — check `docker logs token-services-auditor-1`;
+  the `keys/fabric` mount must resolve (see token-services compose).
+- **Issue fails with "recipient identity"** — the P2P resolver hostnames must
+  match the compose hostnames (`*.sworna.example.com`).
+- Full reset: `./network/network.sh down` (in `network/`), remove
+  `token-services/{keys,data}` and re-run bring-up.
