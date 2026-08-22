@@ -1,0 +1,57 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Python (backend/)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Node (web/)
+node_modules/
+dist/
+build/
+
+# Go (token-services/, chaincode build artifacts)
+bin/
+*.test
+*.out
+
+# Hyperledger Fabric (network/)
+network/bin/
+network/config/
+network/organizations/peerOrganizations/
+network/organizations/ordererOrganizations/
+network/organizations/fabric-ca/
+network/organizations/ca/
+*.block
+channel-artifacts/
+ledger-data/
+
+# Fabric samples clone (de-risking copy)
+fabric-samples/
+
+# CouchDB / DB data
+*.db
+*.ldb
+data/
+
+# Secrets & certs
+*.pem
+*.key
+*.crt
+!**/crypto-config/**/*.crt
+!**/crypto-config/**/*.key
+.env
+*.env
+
+# Logs
+*.log
+logs/
