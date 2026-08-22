@@ -58,3 +58,6 @@ keys/
 # Logs
 *.log
 logs/
+# Machine-local symlinks (point at a fabric-samples checkout)
+bin
+config

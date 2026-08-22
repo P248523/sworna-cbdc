@@ -8,7 +8,7 @@ networks:
 
 services:
   auditor:
-    hostname: auditor.example.com
+    hostname: auditor.sworna.example.com
     restart: always
     build:
       context: ./auditor
@@ -17,6 +17,7 @@ services:
       - ./data/auditor:/var/fsc/data/auditor
       - ./auditor/conf:/conf:ro
       - ./keys:/var/fsc/keys:ro
+      - ../network/organizations:/var/fsc/fabric/organizations:ro
     ports:
       - 9000:9000
     expose:
@@ -30,7 +31,7 @@ services:
       retries: 20
 
   issuer:
-    hostname: issuer.example.com
+    hostname: issuer.sworna.example.com
     restart: always
     build:
       context: ./issuer
@@ -39,6 +40,7 @@ services:
       - ./data/issuer:/var/fsc/data/issuer
       - ./issuer/conf:/conf:ro
       - ./keys:/var/fsc/keys:ro
+      - ../network/organizations:/var/fsc/fabric/organizations:ro
     ports:
       - 9100:9000
     expose:
@@ -50,7 +52,7 @@ services:
         condition: service_healthy
 
   owner1:
-    hostname: owner1.example.com
+    hostname: owner1.sworna.example.com
     restart: always
     build:
       context: ./owner
@@ -59,6 +61,7 @@ services:
       - ./data/owner1:/var/fsc/data/owner1
       - ./owner/conf/owner1:/conf:ro
       - ./keys:/var/fsc/keys:ro
+      - ../network/organizations:/var/fsc/fabric/organizations:ro
     ports:
       - 9200:9000
     expose:
@@ -70,7 +73,7 @@ services:
         condition: service_healthy
 
   owner2:
-    hostname: owner2.example.com
+    hostname: owner2.sworna.example.com
     restart: always
     build:
       context: ./owner
@@ -79,6 +82,7 @@ services:
       - ./data/owner2:/var/fsc/data/owner2
       - ./owner/conf/owner2:/conf:ro
       - ./keys:/var/fsc/keys:ro
+      - ../network/organizations:/var/fsc/fabric/organizations:ro
     ports:
       - 9300:9000
     expose:

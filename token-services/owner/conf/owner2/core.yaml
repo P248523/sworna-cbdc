@@ -32,19 +32,19 @@ fsc:
           id: auditor
           path: /var/fsc/keys/auditor/fsc/msp/signcerts/cert.pem
         addresses:
-          P2P: auditor.example.com:9001
+          P2P: auditor.sworna.example.com:9001
       - name: issuer
         identity:
           id: issuer
           path: /var/fsc/keys/issuer/fsc/msp/signcerts/cert.pem
         addresses:
-          P2P: issuer.example.com:9101
+          P2P: issuer.sworna.example.com:9101
       - name: owner1
         identity:
           id: owner1
           path: /var/fsc/keys/owner1/fsc/msp/signcerts/cert.pem
         addresses:
-          P2P: owner1.example.com:9201
+          P2P: owner1.sworna.example.com:9201
         aliases:
           - owner1
 
@@ -53,13 +53,13 @@ fabric:
   enabled: true
   mynetwork:
     default: true
-    mspConfigPath: /var/fsc/keys/fabric/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp
-    defaultMSP: Org1MSP
+    mspConfigPath: /var/fsc/fabric/organizations/peerOrganizations/bankb.sworna.example.com/users/User1@bankb.sworna.example.com/msp
+    defaultMSP: BankBMSP
     msps:
-      - id: Org1MSP
+      - id: BankBMSP
         mspType: bccsp
-        mspID: Org1MSP
-        path: /var/fsc/keys/fabric/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp
+        mspID: BankBMSP
+        path: /var/fsc/fabric/organizations/peerOrganizations/bankb.sworna.example.com/users/User1@bankb.sworna.example.com/msp
     tls:
       enabled: true
     # If the keepalive values are too low, Fabric peers will complain with: ENHANCE_YOUR_CALM, debug data: "too_many_pings"
@@ -68,21 +68,21 @@ fabric:
       timeout: 600s
     # List of orderer nodes this node can connect to. There must be at least one orderer node. Others are discovered.
     orderers:
-      - address: orderer.example.com:7050
+      - address: orderer.sworna.example.com:7050
         connectionTimeout: 10s
         tlsEnabled: true
-        tlsRootCertFile: /var/fsc/keys/fabric/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/tls/ca.crt
-        serverNameOverride: orderer.example.com
+        tlsRootCertFile: /var/fsc/fabric/organizations/ordererOrganizations/sworna.example.com/orderers/orderer.sworna.example.com/tls/ca.crt
+        serverNameOverride: orderer.sworna.example.com
     # List of trusted peers this node can connect to. There must be at least one trusted peer. Others are discovered.
     peers:
-      - address: peer0.org1.example.com:7051
+      - address: peer0.bankb.sworna.example.com:11051
         connectionTimeout: 10s
         tlsEnabled: true
-        tlsRootCertFile: /var/fsc/keys/fabric/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
-        serverNameOverride: peer0.org1.example.com
+        tlsRootCertFile: /var/fsc/fabric/organizations/peerOrganizations/bankb.sworna.example.com/peers/peer0.bankb.sworna.example.com/tls/ca.crt
+        serverNameOverride: peer0.bankb.sworna.example.com
     # Channel where the token chaincode is deployed
     channels:
-      - name: mychannel
+      - name: settlement
         default: true
     # Configuration of the vault used to store the RW sets assembled by this node
     vault:
@@ -97,7 +97,7 @@ token:
   tms:
     mytms: # unique name of this token management system
       network: mynetwork # the name of the fabric network as configured above
-      channel: mychannel # the name of the network's channel this TMS refers to, if applicable
+      channel: settlement # the name of the network's channel this TMS refers to, if applicable
       namespace: tokenchaincode # chaincode name
       driver: zkatdlog # privacy preserving driver (zero knowledge asset transfer)
       wallets:
