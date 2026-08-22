@@ -70,3 +70,6 @@ dist-*/
 
 # Portal env files are committed config
 !.env.portal-*
+
+# TS build info
+*.tsbuildinfo
