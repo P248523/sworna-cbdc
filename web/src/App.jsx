@@ -81,22 +81,32 @@ function CustomerWallet() {
           <div className="card">
             <h3>Send</h3>
             <form onSubmit={send}>
+              <label>
+                To customer
+                <select value={to} onChange={(e) => setTo(e.target.value)}>
+                  <option value="">— select recipient —</option>
+                  {customers
+                    .filter((c) => c.wallet !== data.balance.wallet)
+                    .map((c) => (
+                      <option key={c.wallet} value={c.wallet}>
+                        {c.full_name} ({c.wallet} @ {c.bank_name})
+                      </option>
+                    ))}
+                </select>
+              </label>
               <input
-                placeholder="to wallet (e.g. bob, carlos)"
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-              />
-              <input
-                placeholder="amount SWR"
+                placeholder="amount SWR (e.g. 10.00)"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
               />
               <input
-                placeholder="message"
+                placeholder="message (optional)"
                 value={msg}
                 onChange={(e) => setMsg(e.target.value)}
               />
-              <button type="submit">Transfer</button>
+              <button type="submit" disabled={!to || !amount}>
+                Transfer
+              </button>
             </form>
             {notice && <p className="ok">{notice}</p>}
           </div>
@@ -204,6 +214,7 @@ function CentralBankConsole() {
   const [overview, setOverview] = useState(null);
   const [txns, setTxns] = useState([]);
   const [ledger, setLedger] = useState(null);
+  const [customers, setCustomers] = useState([]);
   const [wallet, setWallet] = useState("");
   const [bank, setBank] = useState("banka");
   const [amount, setAmount] = useState("");
@@ -213,14 +224,16 @@ function CentralBankConsole() {
 
   async function loadAll() {
     try {
-      const [ov, tr, lg] = await Promise.all([
+      const [ov, tr, lg, cs] = await Promise.all([
         api.overview(),
         api.transactions(),
         api.ledger(),
+        api.customers(),
       ]);
       setOverview(ov);
       setTxns(tr);
       setLedger(lg);
+      setCustomers(cs);
     } catch (e) {
       setError(e.message);
     }
@@ -268,26 +281,48 @@ function CentralBankConsole() {
           <div className="card">
             <h3>Issue SWR</h3>
             <form onSubmit={issue}>
+              <label>
+                To bank
+                <select
+                  value={bank}
+                  onChange={(e) => {
+                    setBank(e.target.value);
+                    setWallet("");
+                  }}
+                >
+                  <option value="banka">banka</option>
+                  <option value="bankb">bankb</option>
+                </select>
+              </label>
+              <label>
+                Recipient
+                <select
+                  value={wallet}
+                  onChange={(e) => setWallet(e.target.value)}
+                >
+                  <option value="">— select customer of {bank} —</option>
+                  {customers
+                    .filter((c) => c.bank_name === bank)
+                    .map((c) => (
+                      <option key={c.wallet} value={c.wallet}>
+                        {c.full_name} ({c.wallet})
+                      </option>
+                    ))}
+                </select>
+              </label>
               <input
-                placeholder="recipient wallet (alice/bob/carlos/dan)"
-                value={wallet}
-                onChange={(e) => setWallet(e.target.value)}
-              />
-              <select value={bank} onChange={(e) => setBank(e.target.value)}>
-                <option value="banka">banka</option>
-                <option value="bankb">bankb</option>
-              </select>
-              <input
-                placeholder="amount SWR"
+                placeholder="amount SWR (e.g. 100.00)"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
               />
               <input
-                placeholder="message"
+                placeholder="message (optional)"
                 value={msg}
                 onChange={(e) => setMsg(e.target.value)}
               />
-              <button type="submit">Issue</button>
+              <button type="submit" disabled={!wallet || !amount}>
+                Issue
+              </button>
             </form>
             {notice && <p className="ok">{notice}</p>}
           </div>

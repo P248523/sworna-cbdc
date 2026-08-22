@@ -134,6 +134,13 @@ select {
   color: var(--text);
 }
 
+form label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
 button {
   padding: 8px 14px;
   border-radius: 8px;
