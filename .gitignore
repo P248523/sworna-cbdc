@@ -64,3 +64,9 @@ config
 
 # Provisioning client home (token CA)
 .ca-client/
+
+# Per-portal production builds (generated)
+dist-*/
+
+# Portal env files are committed config
+!.env.portal-*

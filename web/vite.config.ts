@@ -20,4 +20,13 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    host: true,
+    proxy: {
+      "/api": {
+        target: process.env.SWORNA_BACKEND || "http://localhost:8000",
+        changeOrigin: true,
+      },
+    },
+  },
 });

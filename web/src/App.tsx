@@ -87,6 +87,22 @@ function LoginRedirect() {
   return <LoginPage />;
 }
 
+// Each portal instance can be served under its own URL by running the dev
+// server (or build) with a VITE_DEFAULT_PORTAL env var from an .env file,
+// e.g. .env.portal-banka sets VITE_DEFAULT_PORTAL=banka.
+function defaultPath(): string {
+  switch (import.meta.env.VITE_DEFAULT_PORTAL) {
+    case "cb":
+      return "/cb";
+    case "banka":
+      return "/b/001";
+    case "bankb":
+      return "/b/002";
+    default:
+      return "/login";
+  }
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -111,7 +127,7 @@ export default function App() {
               </RequireAuth>
             }
           />
-          <Route path="*" element={<Navigate to="/login" replace />} />
+          <Route path="*" element={<Navigate to={defaultPath()} replace />} />
         </Routes>
         <Toaster position="top-right" richColors />
       </BrowserRouter>
