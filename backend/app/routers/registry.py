@@ -238,6 +238,18 @@ async def account_statements(
         history = await token_client.auditor_history(account.wallet)
     except TokenServiceError as exc:
         raise HTTPException(502, f"token service error: {exc}") from exc
+
+    # translate internal wallet ids to public account numbers
+    wallet_to_account = {
+        acc.wallet: acc.account_number
+        for acc in session.scalars(select(Account)).all()
+    }
+
+    def _label(wallet: str) -> str:
+        if not wallet:
+            return "CB"
+        return wallet_to_account.get(wallet, wallet)
+
     items: list[StatementItem] = []
     for tx in history:
         items.append(
@@ -245,8 +257,8 @@ async def account_statements(
                 txid=tx.get("id", ""),
                 amount=int(tx.get("amount", {}).get("value", 0)),
                 reference=tx.get("message", ""),
-                sender=tx.get("sender", ""),
-                recipient=tx.get("recipient", ""),
+                sender=_label(tx.get("sender", "")),
+                recipient=_label(tx.get("recipient", "")),
                 status=tx.get("status", ""),
                 timestamp=tx.get("timestamp", ""),
             )
