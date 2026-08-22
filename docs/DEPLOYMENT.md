@@ -1,141 +1,78 @@
 # DEPLOYMENT — how Sworna is deployed
 
-This guide explains how the single code repository is deployed across machines so that different machines act as the **central bank**, **commercial banks**, or serve **customers**.
-
-> Core idea: **one repo, one set of images — role decided by configuration and identity.** A machine is "the central bank" because it runs the central bank's compose file with the central bank's certificates. Customers run nothing; they use a web app.
-
----
-
-## 1. Repository layout (the one repo)
+One repository; a machine's role is decided by **which script it runs** and
+**which keys it holds**.
 
 ```
-CBDC/                          ← ONE git repository (all code lives here)
-├── network/                   # Hyperledger Fabric network definition
-│   ├── configtx/              #   configtx.yaml: organizations, MSPs, channel
-│   ├── organizations/         #   Fabric CA configs + identity scripts per org
-│   └── compose/               #   docker-compose files per role/host
-│       ├── dev/               #     all-in-one (single machine)
-│       ├── centralbank/       #     CB host stack
-│       ├── banka/             #     Bank A host stack
-│       └── bankb/             #     Bank B host stack
-├── token-services/            # issuer / auditor / owner applications
-│   ├── issuer/                #   mint & redeem (central bank only)
-│   ├── auditor/               #   sign/oversee every transaction (central bank)
-│   └── owner/                 #   customer wallets (one instance per bank)
-├── backend/                   # FastAPI: customers, accounts, admin, reports
-├── web/                       # React: customer wallet + CB/bank consoles
-├── explorer/                  # Blockchain Explorer configuration
-├── scripts/                   # deploy helpers (one entry point per role)
-└── docs/                      # all documentation (this file)
+Central-bank host   orderer · peer0.centralbank · CAs · token CA · issuer/auditor · backend · CB portal
+Bank A host         peer0.banka · CA · owner1 · bank portal
+Bank B host         peer0.bankb · CA · owner2 · bank portal
+Customer machines   a browser only (the bank portal)
 ```
 
-Every machine **clones this same repo** (or pulls the same container images). Which role a machine plays is chosen by which script/compose file it runs and which certificates it is provisioned with.
+## 1. The one repo, roles by script
 
-## 2. The same binary, different roles
-
-The token services are one codebase started in different roles:
-
-| Application | Runs on | Role decided by |
+| Script | Runs on | Starts |
 |---|---|---|
-| `issuer` | Central-bank host | issuer configuration + central-bank certificates |
-| `auditor` | Central-bank host | auditor configuration + central-bank certificates |
-| `owner` | Every bank host | bank configuration + that bank's certificates (ports/wallets differ) |
+| `scripts/deploy-centralbank.sh` | CB host | network + chaincode + issuer/auditor + backend + CB portal |
+| `scripts/deploy-banka.sh` | Bank A host | owner1 service + bank A portal |
+| `scripts/deploy-bankb.sh` | Bank B host | owner2 service + bank B portal |
 
-The `owner` binary on Bank A and Bank B is byte-for-byte identical — only its `conf/` folder differs.
+Every host clones the same repo (`git clone <repo>`), installs the Fabric
+binaries/images (`bin`/`config` symlinks at the repo root), then runs its role
+script. The token engine's `keys/` folder — provisioned by the CB — is the
+"join bundle" that makes a bank's owner service valid.
 
-## 3. Per-host role map
+## 2. Provisioning (the CB is the trust anchor)
 
-| Host | Services it runs | Identity (MSP) |
-|---|---|---|
-| **Central-bank host** | orderer cluster (Raft ×3) · `peer0.centralbank` · CA · issuer (:9100) · auditor (:9000) · FastAPI backend · web admin/wallet · explorer | `CentralBankMSP` |
-| **Bank A host** | `peer0.banka` · CA · owner service (:9200) · bank console | `BankAMSP` |
-| **Bank B host** | `peer0.bankb` · CA · owner service (:9300) · bank console | `BankBMSP` |
-| **Customer machines** | nothing installed — a browser only | none (idemix wallet identity inside a bank's owner service) |
-
-## 4. How a host is provisioned
-
-Each host runs one command, which (1) generates/loads that host's certificates and (2) starts only its role's containers:
+The CB generates each bank's idemix wallets from its UI or API:
 
 ```
-git clone <repo> && cd CBDC
-./scripts/deploy-centralbank.sh     # central-bank host
-./scripts/deploy-banka.sh           # bank A host
-./scripts/deploy-bankb.sh           # bank B host
+POST /api/v1/admin/banks/{code}/provision     # generate wallet pool keys
+PATCH /api/v1/banks/{code}/status             # registered -> active
 ```
 
-### 4.1 Identity & certificates
+The generated keys live under `token-services/keys/<owner_node>/` and are
+copied to the bank VM (the join bundle). The bank then starts its owner service.
 
-- Every organization runs its own **Fabric CA**. The script enrolls that host's identities (peer, orderer, admin, services) against the org CA.
-- The resulting certificates chain back to the org's root CA and carry the **MSP ID** (`CentralBankMSP`, `BankAMSP`, `BankBMSP`).
-- Fabric only trusts certificates chained to a CA that is part of the channel configuration — so a machine cannot impersonate another role.
-- Customer wallets use **idemix** credentials issued by the bank CAs (privacy-preserving on the ledger).
+## 3. Bring-up sequence (dev laptop = all-in-one)
 
-### 4.2 What enforcement the network applies
-
-Even with the right code, a transaction is only accepted if the identities can prove they are allowed:
-
-| Action | Identity required | Enforced by |
-|---|---|---|
-| Mint / redeem | central-bank issuer | token chaincode signature check |
-| Approve a transaction | central-bank auditor | mandatory auditor signature in the token flow |
-| Spend a token | the token's owner | owner proves control (idemix / ZK) |
-| Commit / order | orderer + endorsing orgs | Fabric endorsement policy + consensus |
-
-## 5. Required ports (LAN / firewall)
-
-| Port | Service | Opened on |
-|---|---|---|
-| 7050, 7051–7053 | orderers | central-bank host (cluster ports 7090–7099) |
-| 7051, 7052 | peers | each org host |
-| 7054 | Fabric CA | each org host (LAN only) |
-| 9000 | auditor service | central-bank host |
-| 9100 | issuer service | central-bank host |
-| 9200 | owner service (Bank A) | bank A host |
-| 9300 | owner service (Bank B) | bank B host |
-| 8000 | FastAPI backend | central-bank host (reachable by bank/customer hosts) |
-| 8080 | API docs | central-bank host |
-| 8081 | Blockchain Explorer | central-bank host |
-
-Firewall rule: lab machines must reach the central-bank host on the ports above and the relevant bank host for their owner service. All inter-service traffic is TLS.
-
-## 6. Deployment progression
-
-### 6.1 Development (single laptop)
-
-One machine runs **everything** via `network/compose/dev/` — all three orgs' peers, orderers, CAs, token services, backend, and web apps as containers. Fastest iteration loop; used for building and testing the demo.
-
-### 6.2 Lab demo (3+ hosts)
-
-Central-bank host, Bank A host, Bank B host as shown in §3. Customer machines simply open the wallet web app in a browser. This is the "stretch" goal of the prototype demo.
-
-### 6.3 Comprehensive build (up to 25 hosts)
-
-Roles are split further for realism and performance:
-
-| Host group | Machines | Services |
-|---|---|---|
-| Orderer hosts | 1–4 | orderer cluster (SmartBFT 4+ in comprehensive build) |
-| Peer hosts | 1 per org | that org's peer + CouchDB |
-| CA hosts | 1 per org | Fabric CA |
-| Token-service hosts | 2–3 | issuer / auditor / owner services |
-| Backend host | 1 | FastAPI + databases |
-| Web host | 1 | React wallet + consoles |
-| Explorer / monitoring | 1–2 | Blockchain Explorer, Prometheus/Grafana |
-| Customer machines | remainder | browsers only |
-
-Automation: `Ansible` playbooks drive the same `deploy-<role>.sh` scripts across hosts; `make`, `jq`, and shell scripts keep bring-up reproducible (`network up`, `network down`, `seed demo`).
-
-## 7. Bring-up / teardown summary
-
-```
-./scripts/network up            # start the Fabric network (peers, orderers, CAs)
-./scripts/network createChannel # create + join the 'settlement' channel
-./scripts/network deployToken   # deploy token chaincode + start token services
-./scripts/seed                  # reset demo data: issue → distribute → transfers → redeem
-./scripts/network down          # stop and clean everything
+```bash
+./scripts/deploy-centralbank.sh            # everything on one host
+./scripts/demo.sh                          # issue -> transfers -> redeem
 ```
 
-## 8. References
+## 4. Distributed (3 VMs)
 
-- Fabric test network conventions (cryptogen vs CA, compose topology): [REFERENCES.md](REFERENCES.md) `R3`
-- token-sdk services, ports, and "use another Fabric network": [REFERENCES.md](REFERENCES.md) `R13`
+1. CB VM: `./scripts/deploy-centralbank.sh --provision` → generates bank keys.
+2. Copy `token-services/keys/` (+ the owner confs) to each bank VM.
+3. Bank VMs: `./scripts/deploy-banka.sh` / `deploy-bankb.sh`.
+4. The bank peer joining `settlement` from its own host (TLS/gossip/DNS across
+   hosts) is the step to validate on the lab LAN — everything else is identical
+   to the all-in-one run.
+
+## 5. Ports
+
+| Port | Service | Host |
+|---|---|---|
+| 7050 · 7053 | orderer | CB |
+| 7051 / 9051 / 11051 | peers (centralbank / banka / bankb) | per org host |
+| 7054 / 8054 / 9054 | Fabric CAs | per org host |
+| 27054 | token CA | CB |
+| 9000 · 9100 | auditor / issuer | CB |
+| 9200 / 9300 | owner1 / owner2 | banka / bankb |
+| 8000 | backend | CB |
+| 5173 | portals (web dev) | each host |
+
+## 6. Progression
+
+- **Dev (this repo, one laptop):** all-in-one — everything we test on.
+- **Lab demo (3 VMs):** the split above; bank peers join the CB's network.
+- **Comprehensive (up to 25 machines):** more orderers, CouchDB, monitoring,
+  Ansible — Phase 4.
+
+## 7. References
+
+- Provisioning model: `docs/token-network/08-provisioning.md`
+- Token network design: `docs/token-network/`
+- API: `docs/API.md`

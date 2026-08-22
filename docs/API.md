@@ -1,127 +1,79 @@
 # API — Sworna REST endpoint catalog
 
-Two REST surfaces, as designed:
+Two REST surfaces:
 
-1. **Token services** — provided by the reused fabric-samples `token-sdk` sample (Go). These implement the actual on-ledger operations (issue/transfer/redeem) with ZK + UTXO [R13].
-2. **FastAPI banking backend** — our Python layer. Holds the customer/bank/account registry, KYC flags, admin API, and aggregates the token services.
+1. **Banking backend (FastAPI, `:8000`)** — the user-facing API: auth, banks,
+   accounts, payments by account number, admin, provisioning. This is what the
+   portals talk to.
+2. **Token engine (Go, `:9000/:9100/:9200/:9300`)** — the settlement layer
+   (issue/transfer/redeem with ZK). The backend proxies to it; see
+   `docs/token-network/06-api-contracts.md` for its contracts.
 
-Service topology and ports (Phase 1): API docs at `:8080`, auditor `:9000`, issuer `:9100`, owner1 `:9200`, owner2 `:9300` [R13].
-
----
-
-## 1. Token services (from the token-sdk sample) [R13]
-
-### Issuer node — `:9100` (central bank)
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/api/v1/issuer/issue` | Mint tokens to a counterparty account |
-| GET | `/api/v1/issuer/history` | Issuance history |
-| POST | `/api/v1/issuer/redeem` | Redeem/burn tokens (as extended for Sworna) |
-
-`POST /api/v1/issuer/issue` example [R13]:
-
-```json
-{
-  "amount": {"code": "SWR", "value": 1000},
-  "counterparty": {"node": "owner1", "account": "alice"},
-  "message": "CB issuance to bank A"
-}
-```
-
-### Owner nodes — `:9200` (banka), `:9300` (bankb)
-
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/api/v1/owner/accounts` | List accounts on this node |
-| GET | `/api/v1/owner/accounts/{id}` | Account details |
-| GET | `/api/v1/owner/accounts/{id}/transactions` | Transaction history (UTXO-based) |
-| GET | `/api/v1/owner/accounts/{id}/balance` | Aggregate balance from owned UTXOs |
-| POST | `/api/v1/owner/accounts/{id}/transfer` | Transfer tokens to a counterparty |
-| POST | `/api/v1/owner/accounts/{id}/redeem` | Redeem to the issuer |
-
-`POST /api/v1/owner/accounts/alice/transfer` example [R13]:
-
-```json
-{
-  "amount": {"code": "SWR", "value": 100},
-  "counterparty": {"node": "owner2", "account": "dan"},
-  "message": "hello dan!"
-}
-```
-
-Note the UTXO behavior: a 1000 SWR input yields 100 (dan) + 900 (change to alice) [R13].
-
-### Auditor node — `:9000` (central bank supervision)
-
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/api/v1/auditor/balances` | All balances (auditor-only visibility) |
-| GET | `/api/v1/auditor/transactions` | All transaction history |
-| POST | `/api/v1/auditor/approve` | Approve/sign a transaction (internal flow) |
-
-The auditor validates and signs every transaction before it is committed to the token chaincode [R13].
-
-### API documentation
-
-Interactive Swagger docs: `http://localhost:8080` [R13].
+Interactive docs: backend `http://localhost:8000/docs` · engine `:8080`.
 
 ---
 
-## 2. FastAPI banking backend (as-designed)
+## Banking backend (`/api/v1`)
 
-Base path: `/api/v1`. Auth: phase-2 (OIDC). Demo users seeded: alice, bob (bank A); carol, dan (bank B).
+Auth: `Authorization: Bearer <jwt>` from `POST /auth/login`.
 
-### Registry & accounts
-
+### Auth
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/customers` | List customers |
-| POST | `/customers` | Register a customer (onboarding; status `active` by default) |
-| GET | `/customers/{id}` | Customer detail |
-| PATCH | `/customers/{id}` | Update customer / set KYC flags |
-| GET | `/customers/{id}/accounts` | Accounts of a customer |
-| POST | `/customers/{id}/accounts` | Open an account (creates a wallet on the bank's owner node) |
-| GET | `/accounts/{id}` | Account detail (bank, balance from token service, status) |
-| PATCH | `/accounts/{id}` | Set status: `active` / `flagged` / `frozen` (demo AML flag, E1) |
-| GET | `/banks` | List commercial banks |
+| POST | `/auth/login` | `{username, password}` → token + role (`cb_admin`/`bank_staff`/`customer`) |
+| GET | `/auth/me` | current user info |
 
-### Payments (proxies to owner-node token services)
-
+### Banks (cb_admin manages; bank_staff sees own)
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/payments/transfer` | `{fromAccount, toAccount, amount, message}` → owner-node transfer |
-| GET | `/payments/{id}/status` | Transaction status (submitted / endorsed / committed) |
-| GET | `/accounts/{id}/transactions` | Aggregated history for the wallet UI |
-| GET | `/accounts/{id}/balance` | Aggregated SWR balance |
+| GET | `/banks` | list banks (scoped) |
+| POST | `/banks` | create a bank `{code, name, msp_id, owner_node, pool_size, permissions}` |
+| PATCH | `/banks/{code}/status` | `registered` / `active` / `suspended` |
+| PATCH | `/banks/{code}/permissions` | `{can_redeem, interbank_limit_minor, redeem_limit_minor}` |
 
-### Central-bank admin
-
+### Accounts
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/admin/issue` | `{bank, amount}` → issuer node issue |
-| POST | `/admin/redeem` | `{bank, amount}` → issuer node redeem |
-| GET | `/admin/supply` | Total SWR in circulation |
-| GET | `/admin/circulation` | Per-bank circulation |
-| GET | `/admin/overview` | Dashboard aggregate: supply, banks, customers, recent txns |
+| GET | `/accounts` | list accounts (scoped by role/bank) |
+| POST | `/accounts` | onboard a customer: `{full_name, username, password, kyc_level, transfer_limit}` → assigns a wallet from the bank's pool + an account number |
+| GET | `/accounts/{account_number}` | account detail |
+| PATCH | `/accounts/{account_number}/status` | `active` / `flagged` / `frozen` |
+| GET | `/accounts/{account_number}/balance` | SWR balance (major units) |
+| GET | `/accounts/{account_number}/statements` | history with account numbers, not wallet names |
 
-### Example — wallet balance
+Account numbers: `SWR-<bank code>-<8 digits>` (e.g. `SWR-001-00000001`).
 
-```
-GET /api/v1/accounts/acc-alice-001/balance
-→ {"account": "acc-alice-001", "customer": "alice", "bank": "banka",
-   "balance": {"code": "SWR", "value": 900}, "status": "active"}
-```
+### Payments
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/payments/transfer` | `{from_account, to_account, amount, reference}` — cross-bank settles on the ledger |
+| POST | `/payments/redeem` | `{account, amount, reference}` — requires bank `can_redeem` |
+
+Enforced before proxying: sender `active`, recipient not `frozen`, account
+transfer limit, bank interbank/redeem limits.
+
+### Admin (cb_admin)
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/admin/issue` | `{to_account, amount, reference}` |
+| POST | `/admin/banks/{code}/provision` | **generate the bank's wallet-pool keys** via the token CA |
+| GET | `/admin/overview` | total supply + per-bank circulation + account counts |
+| GET | `/admin/transactions` | recent transaction log |
+| GET | `/admin/ledger` | channel height + recent blocks (peer CLI + configtxlator) |
 
 ---
 
-## 3. Data model (FastAPI)
+## Data model
 
-- `customer`: id, name, phone, bank, kycStatus (`pending`/`verified`), accountStatus (`active`/`flagged`/`frozen`), created.
-- `account`: id, customerId, bankId, ownerNode (`owner1`/`owner2`), walletName (e.g., `alice`), tokenType (`SWR`), createdAt.
-- `bank`: id (`banka`/`bankb`), msp (`BankAMSP`/`BankBMSP`), ownerNode, createdAt.
-- `transactionLog`: id, fromAccount, toAccount, amount, status, tokenTxId, timestamp.
+- `bank`: code (`001`), name, msp_id, owner_node, portal_url, status,
+  permissions (JSON), pool_size, wallet_pool (JSON manifest), joined_at.
+- `account`: account_number (unique), full_name, wallet (internal idemix id),
+  status, kyc_level, transfer_limit_minor, bank.
+- `user`: username, password_hash, role, bank_code, account_number.
+- `transaction_log`: txid, tx_type, from_account, to_account, amount_minor,
+  reference, status.
 
-## 4. References
+## References
 
-- token-sdk REST API, ports, and request/response examples: https://github.com/hyperledger/fabric-samples/tree/main/token-sdk [R13]
+- Provisioning model: `docs/token-network/08-provisioning.md`
+- Token-engine contracts: `docs/token-network/06-api-contracts.md`

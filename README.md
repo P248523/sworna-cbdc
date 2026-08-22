@@ -2,7 +2,7 @@
 
 **Sworna** is a prototype Central Bank Digital Currency (CBDC) system built on **Hyperledger Fabric**, modeling a two-tier retail + wholesale payment system for the **Nepali rupee** concept. The currency is represented on-ledger as **UTXO tokens protected by Zero-Knowledge Proofs** — amounts and parties remain hidden to the ledger while remaining provably valid, with a central-bank-operated **auditor** enforcing oversight.
 
-> **Project status: Phase 3 prototype — working on the dev laptop.** A 3-organization Fabric network (central bank + Bank A + Bank B) with ZK-private SWR tokens, a Python FastAPI banking core, and a React UI. See [docs/token-network/](docs/token-network/) and the [bring-up notes](#running-the-stack).
+> **Project status: v2 — real banking system (working on the dev laptop).** 3-org Fabric settlement, ZK-private SWR, and now a banking layer: account numbers, per-bank portals, JWT auth, payments by account number (incl. cross-bank), CB provisioning (wallet-pool keys + permissions), and a shadcn/ui interface. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and [docs/token-network/](docs/token-network/).
 
 ---
 
