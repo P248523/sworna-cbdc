@@ -1,68 +1,41 @@
-# Running the test network
+# network/ — the Sworna settlement network
 
-You can use the `./network.sh` script to stand up a simple Fabric test network. The test network has two peer organizations with one peer each and a single node raft ordering service. You can also use the `./network.sh` script to create channels and deploy chaincode. For more information, see [Using the Fabric test network](https://hyperledger-fabric.readthedocs.io/en/latest/test_network.html). The test network is being introduced in Fabric v2.0 as the long term replacement for the `first-network` sample.
+Our 3-organization Hyperledger Fabric network (adapted from the fabric-samples
+test network and now owned here):
 
-If you are planning to run the test network with consensus type BFT then please pass `-bft` flag as input to the `network.sh` script when creating the channel. This sample also supports the use of consensus type BFT and CA together.
-That is to create a network use:
+| Org | MSP | Domain | Peer |
+|---|---|---|---|
+| Central bank | `CentralBankMSP` | `centralbank.sworna.example.com` | `peer0.centralbank.sworna.example.com:7051` |
+| Bank A | `BankAMSP` | `banka.sworna.example.com` | `peer0.banka.sworna.example.com:9051` |
+| Bank B | `BankBMSP` | `bankb.sworna.example.com` | `peer0.bankb.sworna.example.com:11051` |
+
+Channel: `settlement`. Orderer: `orderer.sworna.example.com:7050` (single-node
+Raft in dev; more orderers in the lab/Phase 4).
+
+## Bring-up
+
 ```bash
-./network.sh up -bft
+./network.sh up createChannel -ca        # centralbank + banka, channel settlement
+./network/addOrg3/addOrg3.sh up          # bankb joins the channel
+./network.sh deployCCAAS -ccn tokenchaincode -ccp ../token-services/tokenchaincode -cci init -ccs 1
+./network.sh down                        # teardown
 ```
 
-To create a channel use:
+Prerequisites: the Fabric binaries/images (see the root README), plus `bin` and
+`config` symlinks at the repo root pointing at a `fabric-samples` checkout.
 
-```bash
-./network.sh createChannel -bft
-```
+## Layout
 
-To restart a running network use:
+- `configtx/` — organizations, MSPs, channel, Raft profile.
+- `organizations/` — Fabric CA registration/enrollment scripts; generated crypto
+  is gitignored.
+- `compose/` — docker compose for CAs, orderers, peers (docker + podman).
+- `scripts/` — channel creation, CCAAS deployment, org3 join helpers.
+- `addOrg3/` — the "a bank joins the settlement network" flow (bank B).
 
-```bash
-./network.sh restart -bft
-```
+## Notes
 
-Note that running the createChannel command will start the network, if it is not already running.
-
-Before you can deploy the test network, you need to follow the instructions to [Install the Samples, Binaries and Docker Images](https://hyperledger-fabric.readthedocs.io/en/latest/install.html) in the Hyperledger Fabric documentation.
-
-## Using the Peer commands
-
-The `setOrgEnv.sh` script can be used to set up the environment variables for the organizations, this will help to be able to use the `peer` commands directly.
-
-First, ensure that the peer binaries are on your path, and the Fabric Config path is set assuming that you're in the `test-network` directory.
-
-```bash
- export PATH=$PATH:$(realpath ../bin)
- export FABRIC_CFG_PATH=$(realpath ../config)
-```
-
-You can then set up the environment variables for each organization. The `./setOrgEnv.sh` command is designed to be run as follows.
-
-```bash
-export $(./setOrgEnv.sh Org2 | xargs)
-```
-
-(Note bash v4 is required for the scripts.)
-
-You will now be able to run the `peer` commands in the context of Org2. If a different command prompt, you can run the same command with Org1 instead.
-The `setOrgEnv` script outputs a series of `<name>=<value>` strings. These can then be fed into the export command for your current shell.
-
-## Chaincode-as-a-service
-
-To learn more about how to use the improvements to the Chaincode-as-a-service please see this [tutorial](./test-network/../CHAINCODE_AS_A_SERVICE_TUTORIAL.md). It is expected that this will move to augment the tutorial in the [Hyperledger Fabric ReadTheDocs](https://hyperledger-fabric.readthedocs.io/en/release-2.4/cc_service.html)
-
-
-## Podman
-
-*Note - podman support should be considered experimental but the following has been reported to work with podman 4.1.1 on Mac. If you wish to use podman a LinuxVM is recommended.*
-
-Fabric's `install-fabric.sh` script has been enhanced to support using `podman` to pull down images and tag them rather than docker. The images are the same, just pulled differently. Simply specify the 'podman' argument when running the `install-fabric.sh` script. 
-
-Similarly, the `network.sh` script has been enhanced so that it can use `podman` and `podman-compose` instead of docker. Just set the environment variable `CONTAINER_CLI` to `podman` before running the `network.sh` script:
-
-```bash
-CONTAINER_CLI=podman ./network.sh up
-````
-
-As there is no Docker-Daemon when using podman, only the `./network.sh deployCCAAS` command will work. Following the Chaincode-as-a-service Tutorial above should work. 
-
-
+- `bft-config/` and the `-bft`/couch/podman/deployCC paths are retained from the
+  upstream network for future phases (SmartBFT, CouchDB); we currently run
+  single Raft orderer + LevelDB + chaincode-as-a-service.
+- Docs: [docs/DEMO.md](../docs/DEMO.md) · [docs/token-network](../docs/token-network).
