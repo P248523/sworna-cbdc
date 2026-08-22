@@ -2,7 +2,66 @@
 
 **Sworna** is a prototype Central Bank Digital Currency (CBDC) system built on **Hyperledger Fabric**, modeling a two-tier retail + wholesale payment system for the **Nepali rupee** concept. The currency is represented on-ledger as **UTXO tokens protected by Zero-Knowledge Proofs** — amounts and parties remain hidden to the ledger while remaining provably valid, with a central-bank-operated **auditor** enforcing oversight.
 
-> **Project status: Phase 1 — Documentation.** This repository currently contains the planning and architecture documentation only. No prototype code has been written yet. See [docs/PHASES.md](docs/PHASES.md).
+> **Project status: Phase 1 done, Phase 2 (de-risking) complete.** The token-sdk stack is verified end-to-end on a dev laptop (Fabric v3.1.5). See [Phase 2 report](#phase-2--de-risking-report) below and [docs/PHASES.md](docs/PHASES.md).
+
+---
+
+## Phase 2 — De-risking report
+
+Status: **PASSED (with one known blocker — see §5).** Verified 2026-08-22 on the dev laptop.
+
+### 1. Pinned versions (setup basis)
+
+| Component | Version / commit |
+|---|---|
+| `fabric-samples` | commit `05edea01d4cf24dd4087bd3750c36e690dc4d6ff` (main) |
+| Fabric peer / orderer / ccenv | **v3.1.5** (`hyperledger/fabric-{peer,orderer,ccenv}:3.1.5`) |
+| Fabric CA | **v1.5.22** |
+| `fabric-token-sdk` / `fabric-smart-client` | **v0.3.0** (in `token-sdk/{auditor,issuer,owner}/go.mod` + `tokenchaincode/Dockerfile`) |
+| `tokengen` | v0.3.0 (`go install ...@v0.3.0`) |
+| Go toolchain | **1.24** (sample requires `go 1.24.0`) |
+
+### 2. Required build fixes (the sample does not build unmodified today)
+
+The sample's pinned dependency graph is broken under current Go/Docker toolchains. Four changes were required in the local `fabric-samples/token-sdk` copy:
+
+1. **Pin `quic-go` v0.38.1 + `qpack` v0.4.0** in `auditor/`, `issuer/`, `owner/` — the sample's go.mod recorded v0.49.1, which is incompatible with the SDKs' webtransport-go v0.5.3 / libp2p v0.31 pins.
+2. **Pin `gnark-crypto` v0.9.1** in all three modules — the sample recorded v0.18.1 (issuer/owner) and v0.12.1 (auditor); the IBM/mathlib + idemix stack requires v0.9.1 (`//go:linkname` to `bls12-381.g1Isogeny` breaks otherwise).
+3. **Fix `go.work`** from `go 1.23.0` → `go 1.24.0` (was inconsistent with the module `go 1.24.0` directives).
+4. **Pin `Dockerfile` + `tokenchaincode/Dockerfile`** base image `golang:latest` → `golang:1.24` (both build with `go build`, which fails on the current `golang:latest`).
+
+After each `go get` downgrade, run `go mod tidy` in each module to reconcile `go.sum`. These fixes live only in the local clone (gitignored), not in the repo — capture them when we fork the token layer in Phase 3.
+
+### 3. Verified end-to-end (token-sdk sample, 2-org test network)
+
+- **Issue** 1000 TOK → alice (`/api/v1/issuer/issue`) ✅
+- **Transfer** 100 TOK alice → dan (cross-owner, `/api/v1/owner/.../transfer`) ✅
+- **Redeem** 40 TOK from dan (`/api/v1/owner/.../redeem`) ✅
+- **UTXO change-splitting** ✅ — the transfer tx produced **two** outputs: 100 → dan, 900 → alice (change), same tx id.
+- **ZK privacy** ✅ — decoded ledger blocks 2–7 contain **no** plaintext amounts (1000/100/900), token code, party names, or messages. Only matches are the chaincode's internal `ztoken` namespace prefix and base64 coincidences inside encrypted payloads.
+- **Auditor oversight** ✅ — `/api/v1/auditor/accounts/alice/transactions` reveals full amounts, sender, and recipient (the auditor sees through the ZK).
+
+### 4. Running the sample (dev machine)
+
+```bash
+cd fabric-samples && ./install-fabric.sh -f 3.1.5 -c 1.5.22 docker binary
+export PATH="$PWD/bin:$HOME/go/bin:$PATH"
+go install github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen@v0.3.0
+cd token-sdk && ./scripts/up.sh     # start; use ./scripts/down.sh to stop
+```
+
+Services: swagger `:8080`, auditor `:9000`, issuer `:9100`, owner1 `:9200`, owner2 `:9300`.
+
+### 5. Known blocker — Blockchain Explorer vs Fabric v3
+
+The `hyperledger-labs/blockchain-explorer` (used by the sample on `:8081`) **does not work with Fabric v3.x**. Its synchronizer calls the `lscc.syscc` system chaincode, which was removed in Fabric v3 — sync fails and **0 blocks** are stored. This is a known upstream issue (blockchain-explorer #508, #512).
+
+**Options for Phase 3** (choose in Week 1):
+1. Drop the explorer from the demo; surface ledger activity through the FastAPI/React admin console (peer queries + `configtxlator` block decode).
+2. Track a v3-compatible explorer fork (community, unverified).
+3. Pin peers/orderers to Fabric v2.5.9 for explorer-only runs — contradicts the v3.1.x decision; not recommended.
+
+Recommendation: **Option 1** for the Phase-3 demo.
 
 ---
 
