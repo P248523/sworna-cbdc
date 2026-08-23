@@ -27,17 +27,21 @@ A guided ~10-minute walkthrough of the two-tier banking system with ZK privacy:
 
 ## Running it
 
-Bring up **everything** (all-in-one host):
+**All-in-one host** (dev laptop — everything on one machine):
 
 ```bash
 ./scripts/deploy-centralbank.sh --provision   # network, chaincode, identities, issuer/auditor, backend, portal
-cd token-services && docker compose up -d --build owner1 owner2   # owners needed for transfers/redeem
+cd token-services && docker compose -f docker-compose.bank.yaml up -d --build owner1 owner2   # owners needed for transfers/redeem
 ./scripts/demo.sh                             # issue → transfers → redeem
 ```
 
+**Distributed (3 VMs):** deploy the CB (`--provision --distributed`) then each
+bank on its own VM (`deploy-banka.sh` / `deploy-bankb.sh`) — the owners run
+there. Then run `./scripts/demo.sh` from the CB host (it talks to the backend
+on localhost).
+
 > Without owner1/owner2 the demo cannot run — the CB-only deployment supports
-> provisioning and issuance setup, not retail transfers. Distributed banks:
-> run the bank deploy scripts on their own VMs instead of the owner step above.
+> provisioning and issuance setup, not retail transfers.
 
 Portals (dev): `http://localhost:5173` with the path/route per portal —
 logins below. For the production-built 3-portal mode use

@@ -1,123 +1,99 @@
 # Token network — distributed deployment (3 hosts)
 
-> **Status: PLANNED — not yet validated.** The lab split (CB host + Bank A VM +
-> Bank B VM) works only after the cross-host networking below is exercised. The
-> all-in-one deployment (everything on one host) is the validated reference —
-> see [SETUP.md](../SETUP.md). Everything in this document is the "make it
-> real across hosts" plan.
+> **Status: IMPLEMENTED — pending live validation.** The scripts, compose files
+> and join-bundle flow below are in the repo and pass static validation, but the
+> cross-host run (bank peers on their own VMs reaching the CB host) has not yet
+> been exercised on real VMs. Until the §4 checklist passes, treat the all-in-one
+> deployment as the validated reference — see [SETUP.md](../SETUP.md).
 
 ## 1. Host → role map
 
-| Host | Runs (containers/services) | Notable ports |
+Every bank is **fully self-contained** on its own VM (CA + peer + chaincode +
+owner + portal). The CB host keeps the orderer, the central-bank peer, the token
+CA, issuer/auditor, backend and CB portal.
+
+| Host | Runs | Ports (host) |
 |---|---|---|
-| Central bank VM | orderer · peers (centralbank, banka, bankb) · Fabric CAs · token CA · issuer · auditor · backend · CB portal | 7050/7053, 7051/9051/11051, 7054/8054/9054, 27054, 9000, 9100, 8000, 5173 |
-| Bank A VM | owner1 · bank A portal | 9200, 5173 |
-| Bank B VM | owner2 · bank B portal | 9300, 5173 |
+| Central bank VM | orderer · peer0.centralbank · ca_org1 · ca_orderer · ca_token_network · issuer · auditor · swagger-ui · backend · CB portal | 7050/7053, 7051, 7054/9054, 27054, 9000, 9100, 8000, 5173 |
+| Bank A VM | ca_org2 · peer0.banka · token chaincode (peer0org2) · owner1 · bank portal | 8054, 9051, 9200, 5173 |
+| Bank B VM | ca_org3 · peer0.bankb · token chaincode (peer0org3) · owner2 · bank portal | 9054, 11051, 9300, 5173 |
 
-The Fabric peers/orderer currently run **on the CB host** (that is what
-`network.sh up` + `addOrg3` do). Bank VMs run only the owner FSC service and
-the portal; they reach the network **back to the CB host**.
+## 2. Cross-host DNS (handled by compose `extra_hosts`)
 
-> Relocating a bank's peer to its own VM (true distributed peer-join) is the
-> explicitly unvalidated step from [DEPLOYMENT.md](../DEPLOYMENT.md) §4. The
-> owner-service split below is the first distributed milestone.
+Containers cannot use the host's `/etc/hosts`. Each host's compose files map the
+remote `*.sworna.example.com` names to the owning VM's Tailscale IP:
 
-## 2. What the owner service needs to resolve
+- **Bank peer** (`network/compose/compose-bank-peer.yaml`): maps
+  `orderer.sworna.example.com` and `peer0.centralbank.sworna.example.com` to
+  `SWORNA_CB_HOST`.
+- **Bank owner** (`token-services/docker-compose.bank.net.yaml`): maps
+  orderer/auditor/issuer → `SWORNA_CB_HOST`, and the other bank's owner →
+  `SWORNA_OTHER_BANK_HOST`.
+- **CB issuer/auditor** (`token-services/docker-compose.net.yaml`): maps
+  owner1/owner2 → `SWORNA_BANKA_HOST` / `SWORNA_BANKB_HOST`.
 
-From `token-services/owner/conf/owner{1,2}/core.yaml` (read them — they are
-authoritative), each owner FSC node connects to:
+The peers/owners connect **out** to the CB host; no inbound firewall rules are
+needed on the CB beyond the published ports. The orderer does not dial peers.
 
-| Hostname | Port | Purpose | Runs on |
-|---|---|---|---|
-| `auditor.sworna.example.com` | 9001 | FSC P2P bootstrap | CB host |
-| `issuer.sworna.example.com` | 9101 | FSC P2P | CB host |
-| `owner1.sworna.example.com` | 9201 | FSC P2P | Bank A VM |
-| `owner2.sworna.example.com` | 9301 | FSC P2P | Bank B VM |
-| `orderer.sworna.example.com` | 7050 | ordering service | CB host |
-| `peer0.banka.sworna.example.com` | 9051 | Fabric peer (owner1) | CB host |
-| `peer0.bankb.sworna.example.com` | 11051 | Fabric peer (owner2) | CB host |
+## 3. Bring-up sequence
 
-TLS `serverNameOverride` means these hostnames must match the certificates —
-you cannot connect by bare IP.
-
-## 3. Cross-host requirements (the gaps to close)
-
-### 3.1 DNS
-
-Containers do not see the host's `/etc/hosts`. Add `extra_hosts` to the owner
-services in `token-services/docker-compose.yaml` mapping every hostname above
-to the owning host's Tailscale IP. Example for the Bank A owner:
-
-```yaml
-  owner1:
-    extra_hosts:
-      - "auditor.sworna.example.com:100.72.112.29"
-      - "issuer.sworna.example.com:100.72.112.29"
-      - "orderer.sworna.example.com:100.72.112.29"
-      - "peer0.banka.sworna.example.com:100.72.112.29"
-      - "owner1.sworna.example.com:<BANKA-IP>"
-      - "owner2.sworna.example.com:<BANKB-IP>"
-```
-
-(An alternative is a lab DNS entry for `*.sworna.example.com`, but
-`extra_hosts` needs no DNS server.)
-
-### 3.2 Publish the FSC P2P ports
-
-The compose file only `expose`s the P2P ports (9001/9101/9201/9301) — that is
-sufficient inside the single-host Docker network but **not reachable from other
-hosts**. Publish them on each host:
-
-```yaml
-  auditor:
-    ports:
-      - 9001:9001        # so bank owners can bootstrap to the auditor
-  issuer:
-    ports:
-      - 9101:9101
-  owner1:
-    ports:
-      - 9201:9001        # bank host publishes owner1's P2P port
-  owner2:
-    ports:
-      - 9301:9001
-```
-
-### 3.3 Firewall / Tailscale
-
-Tailscale nodes accept traffic between themselves by default; if the VMs run a
-host firewall (`ufw`), allow the tailnet interface. Services must bind
-`0.0.0.0` (the compose `ports:` mappings already do).
-
-### 3.4 The join bundle must include the org crypto
-
-The owner containers mount `../network/organizations` for TLS certs and MSPs
-(`/var/fsc/fabric/organizations`). On a bank VM this directory does not exist
-(fresh clone). Copy from the CB host:
+### 3.1 CB host (distributed mode)
 
 ```bash
-# from the CB host, for Bank A:
-scp -r ~/CBDC/token-services/keys/owner1 sapiens@<BANKA-IP>:~/CBDC/token-services/keys/
-scp -r ~/CBDC/network/organizations/peerOrganizations/banka.sworna.example.com \
-        sapiens@<BANKA-IP>:~/CBDC/network/organizations/peerOrganizations/
-scp -r ~/CBDC/network/organizations/ordererOrganizations/sworna.example.com \
-        sapiens@<BANKA-IP>:~/CBDC/network/organizations/ordererOrganizations/
+export SWORNA_BANKA_HOST=<bank-A-IP> SWORNA_BANKB_HOST=<bank-B-IP>   # optional, for cross-bank
+./scripts/deploy-centralbank.sh --provision --distributed
 ```
 
-The bank deploy scripts now fail fast if either `keys/` or the org crypto is
-missing, so a missing bundle cannot silently mis-start.
+This brings up the full network (all 3 orgs + channel + chaincode committed),
+then **stops/removes the bank peers/CAs/chaincode from the CB host** and exports
+each bank's join bundle:
+
+```bash
+ls dist-bank-bundles/        # banka.tar.gz, bankb.tar.gz
+```
+
+### 3.2 Copy join bundles to the bank VMs
+
+```bash
+scp dist-bank-bundles/banka.tar.gz sapiens@<BANK-A-IP>:~/CBDC/
+scp dist-bank-bundles/bankb.tar.gz sapiens@<BANK-B-IP>:~/CBDC/
+# on each bank VM, extract under the repo root:
+#   cd ~/CBDC && tar xzf banka.tar.gz
+```
+
+The bundle (see `scripts/export-join-bundles.sh`) contains everything a bank
+needs that isn't in git: the owner's idemix wallets, the org's peer/admin
+crypto, the orderer TLS CA, the org's Fabric CA data, and the channel genesis
+block.
+
+### 3.3 Bank VMs
+
+```bash
+# Bank A
+export SWORNA_CB_HOST=<CB-IP> SWORNA_BANKB_HOST=<BANK-B-IP>
+./scripts/deploy-banka.sh
+
+# Bank B
+export SWORNA_CB_HOST=<CB-IP> SWORNA_BANKA_HOST=<BANK-A-IP>
+./scripts/deploy-bankb.sh
+```
+
+Each bank script: installs the bundle, starts CA + peer, joins `settlement`,
+installs the token chaincode package and runs its CCAAS container
+(`scripts/bank-network.sh up`), starts the owner service, and starts the portal.
 
 ## 4. Validation checklist (run once, record the result)
 
-- [ ] Bank A VM: `curl http://<BANKA-IP>:9200/api/v1/readyz` → ready
-- [ ] Bank B VM: `curl http://<BANKB-IP>:9300/api/v1/readyz` → ready
-- [ ] From CB host, issuer reaches owner1 P2P (`owner1.sworna.example.com:9201`)
+- [ ] Bank A VM: `docker ps` shows `ca_org2`, `peer0.banka.sworna.example.com`, `peer0org2_tokenchaincode_ccaas`, `owner1` healthy
+- [ ] Bank B VM: `docker ps` shows `ca_org3`, `peer0.bankb.sworna.example.com`, `peer0org3_tokenchaincode_ccaas`, `owner2` healthy
+- [ ] CB host: `docker ps` shows NO bank peer/CA/chaincode containers
+- [ ] Bank A: `peer channel list` (as Admin@banka) shows `settlement`
+- [ ] Bank A VM: `curl http://<BANK-A-IP>:9200/api/v1/readyz` → ready
 - [ ] CB issues SWR to a Bank A customer → balance appears on the bank portal
 - [ ] Cross-bank transfer A → B commits and shows on both portals + auditor
 - [ ] Redeem from Bank B works
 
-When this checklist passes, promote the status at the top of this file and
-update [DEPLOYMENT.md](../DEPLOYMENT.md) §4.
+When this checklist passes, promote the status at the top of this file.
 
 ## 5. Related docs
 

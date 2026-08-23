@@ -6,14 +6,28 @@
 # network, the token engine (issuer+auditor), the banking backend and the
 # CB portal.
 #
-# Usage: ./scripts/deploy-centralbank.sh [--provision]
-#   --provision   also generate wallet-pool keys for banks 001/002 (requires
-#                 the token CA to be running; creates keys + edits owner confs)
+# Usage: ./scripts/deploy-centralbank.sh [--provision] [--distributed]
+#   --provision    also generate wallet-pool keys for banks 001/002 (requires
+#                  the token CA to be running; creates keys + edits owner confs)
+#   --distributed  distributed mode: the bank peers/CAs/chaincode are NOT run
+#                  on the CB host. After the network + chaincode are set up they
+#                  are stopped here and each bank's join bundle is exported to
+#                  dist-bank-bundles/ for scp to the bank VMs. Set SWORNA_BANKA_HOST /
+#                  SWORNA_BANKB_HOST to also wire the CB engine to the bank owners.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="$ROOT/bin:$PATH"
 export FABRIC_CFG_PATH="$ROOT/config"
+
+DISTRIBUTED=0
+PROVISION=0
+for arg in "$@"; do
+  case "$arg" in
+    --distributed) DISTRIBUTED=1 ;;
+    --provision)   PROVISION=1 ;;
+  esac
+done
 
 cd "$ROOT/network"
 
@@ -41,9 +55,13 @@ if [ ! -d "$ROOT/token-services/keys/issuer/fsc" ]; then
   ./scripts/enroll-users.sh
 fi
 
-docker compose up -d --build issuer auditor
+COMPOSE_FILES="-f docker-compose.yaml"
+if [ "$DISTRIBUTED" = "1" ] && [ -n "${SWORNA_BANKA_HOST:-}" ] && [ -n "${SWORNA_BANKB_HOST:-}" ]; then
+  COMPOSE_FILES="-f docker-compose.yaml -f docker-compose.net.yaml"
+fi
+docker compose $COMPOSE_FILES up -d --build issuer auditor
 
-if [ "${1:-}" = "--provision" ]; then
+if [ "$PROVISION" = "1" ]; then
   echo "==> provisioning wallet pools for banks 001/002"
   sleep 10  # let the engine connect
   TOKEN=$(curl -sf -X POST http://localhost:8000/api/v1/auth/login \
@@ -68,6 +86,17 @@ cd "$ROOT/backend"
 cd "$ROOT/web"
 npm install --silent
 (setsid npm run dev > /tmp/sworna-web.log 2>&1 &)
+
+if [ "$DISTRIBUTED" = "1" ]; then
+  echo "==> [6/6] Distributed mode: moving the banks off this host"
+  cd "$ROOT/network"
+  echo "   stopping bank peers/CAs/chaincode on the CB host (they run on bank VMs)"
+  docker rm -f peer0.banka.sworna.example.com peer0.bankb.sworna.example.com \
+    ca_org2 ca_org3 peer0org2_tokenchaincode_ccaas peer0org3_tokenchaincode_ccaas 2>/dev/null || true
+  ./scripts/export-join-bundles.sh
+  echo
+  echo "Bank join bundles exported to $ROOT/dist-bank-bundles/ — scp each to its bank VM."
+fi
 
 echo
 echo "Central-bank host ready."

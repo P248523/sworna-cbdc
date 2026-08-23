@@ -4,9 +4,9 @@ One repository; a machine's role is decided by **which script it runs** and
 **which keys it holds**.
 
 ```
-Central-bank host   orderer · peer0.centralbank · CAs · token CA · issuer/auditor · backend · CB portal
-Bank A host         owner1 · bank portal                       (peers/orderer live on the CB host today)
-Bank B host         owner2 · bank portal
+Central-bank host   orderer · peer0.centralbank · ca_org1 · ca_orderer · token CA · issuer/auditor · backend · CB portal
+Bank A host         ca_org2 · peer0.banka · chaincode · owner1 · bank portal
+Bank B host         ca_org3 · peer0.bankb · chaincode · owner2 · bank portal
 Customer machines   a browser only (the bank portal)
 ```
 
@@ -18,16 +18,16 @@ Customer machines   a browser only (the bank portal)
 
 | Script | Runs on | Starts |
 |---|---|---|
-| `scripts/deploy-centralbank.sh` | CB host | network + chaincode + **identity enrollment** + issuer/auditor + backend + CB portal |
-| `scripts/deploy-banka.sh` | Bank A host | owner1 service + bank A portal |
-| `scripts/deploy-bankb.sh` | Bank B host | owner2 service + bank B portal |
+| `scripts/deploy-centralbank.sh --provision --distributed` | CB host | network + chaincode + **identity enrollment** + issuer/auditor + backend + CB portal; then **removes the bank peers/CAs/chaincode** and exports the join bundles |
+| `scripts/deploy-banka.sh` | Bank A host | ca_org2 + peer0.banka + chaincode (joins `settlement`) + owner1 + bank A portal |
+| `scripts/deploy-bankb.sh` | Bank B host | ca_org3 + peer0.bankb + chaincode (joins `settlement`) + owner2 + bank B portal |
 
-Every host clones the same repo, installs the Fabric binaries/images into the
-repo's own `bin/`/`config/` (`./scripts/install-fabric-tools.sh`), then
-runs its role script. The token engine's `keys/` folder — provisioned by the CB —
-is the **join bundle** that makes a bank's owner service valid. On a bank VM the
-bundle also includes the org crypto under `network/organizations/` (TLS certs +
-MSPs), which the owner containers mount.
+Every host clones the same repo and installs the Fabric binaries/images into the
+repo's own `bin/`/`config/` (`./scripts/install-fabric-tools.sh`). Each bank is
+fully self-contained on its own VM: it receives a **join bundle** from the CB
+(`scripts/export-join-bundles.sh` → `dist-bank-bundles/<bank>.tar.gz`) containing
+the owner's idemix wallets, the org crypto (peer + admin + Fabric CA data), the
+orderer TLS CA and the channel genesis block.
 
 ## 2. Provisioning (the CB is the trust anchor)
 
@@ -51,36 +51,53 @@ Provisioning is idempotent — re-run to top up a pool.
 - Backend paths derive from the repo location (`backend/app/paths.py`) — no
   hardcoded absolute paths, so any clone path works.
 
-## 4. Bring-up sequence (dev laptop = all-in-one)
+## 4. Bring-up sequence
+
+**Distributed (3 VMs) — the target:**
 
 ```bash
-./scripts/deploy-centralbank.sh --provision   # network, chaincode, identities, issuer/auditor, backend, portal
-# all-in-one only: also run the two bank scripts, or:
-cd token-services && docker compose up -d --build owner1 owner2
+# CB VM
+./scripts/deploy-centralbank.sh --provision --distributed    # network + chaincode + engine + portal; then:
+#   - removes the bank peers/CAs/chaincode from the CB host
+#   - exports dist-bank-bundles/banka.tar.gz + bankb.tar.gz
+
+# copy the bundles to each bank VM, extract under the repo root, then:
+# Bank A VM
+export SWORNA_CB_HOST=<CB-IP> SWORNA_BANKB_HOST=<BANK-B-IP>
+./scripts/deploy-banka.sh
+# Bank B VM
+export SWORNA_CB_HOST=<CB-IP> SWORNA_BANKA_HOST=<BANK-A-IP>
+./scripts/deploy-bankb.sh
+```
+
+**All-in-one (dev laptop):** `./scripts/deploy-centralbank.sh --provision`
+(no `--distributed`), then run the owners locally:
+
+```bash
+cd token-services && docker compose -f docker-compose.bank.yaml up -d --build owner1 owner2
 ./scripts/demo.sh                             # issue -> transfers -> redeem
 ```
 
-For a **CB host without owner nodes** (real two-tier, banks on their own VMs),
-`deploy-centralbank.sh --provision` is enough — it also generates the bank join
-bundles. The demo's cross-bank flows need owner1/owner2 running somewhere.
+The demo's cross-bank flows need owner1/owner2 running somewhere.
 
-## 5. Distributed (3 VMs) — see docs/token-network/09
+## 5. Distributed networking
 
-1. CB VM: `./scripts/deploy-centralbank.sh --provision` → generates bank keys + crypto.
-2. Copy the join bundle (`token-services/keys/` + the bank's
-   `network/organizations/` dirs) to each bank VM over Tailscale/SSH.
-3. Bank VMs: `./scripts/deploy-banka.sh` / `deploy-bankb.sh`.
-4. **Unvalidated step:** cross-host DNS (`extra_hosts`), FSC P2P port publishing,
-   and firewall rules — see
-   [docs/token-network/09-distributed-deployment.md](token-network/09-distributed-deployment.md).
+Cross-host DNS is handled by compose `extra_hosts` derived from
+`SWORNA_CB_HOST` / sibling bank IPs; peers and owners connect **out** to the CB
+host. The full hostname map, the join-bundle contents and the validation
+checklist live in
+[docs/token-network/09-distributed-deployment.md](token-network/09-distributed-deployment.md)
+(**implemented, pending live validation**).
 
 ## 6. Ports
 
 | Port | Service | Host |
 |---|---|---|
 | 7050 · 7053 | orderer | CB |
-| 7051 / 9051 / 11051 | peers (centralbank / banka / bankb) | CB (today) |
-| 7054 / 8054 / 9054 | Fabric CAs | CB |
+| 7051 | peer0.centralbank | CB |
+| 9051 / 11051 | peers (banka / bankb) | banka / bankb |
+| 7054 · 9054 | ca_org1 · ca_orderer | CB |
+| 8054 / 9054 | ca_org2 / ca_org3 | banka / bankb |
 | 27054 | token CA | CB |
 | 9000 · 9100 | auditor / issuer | CB |
 | 9200 / 9300 | owner1 / owner2 | banka / bankb |
@@ -93,8 +110,8 @@ Services bind `0.0.0.0`, so on lab VMs the portals/backend are reachable at
 ## 7. Progression
 
 - **Dev (this repo, one laptop):** all-in-one — everything we test on.
-- **Lab demo (3 VMs):** the split above; owner services on bank VMs reach the
-  CB's network — this is what [09-distributed-deployment.md](token-network/09-distributed-deployment.md) is validating.
+- **Lab demo (3 VMs):** the split above — each bank runs its own peer/CA/owner;
+  cross-host DNS is [09-distributed-deployment.md](token-network/09-distributed-deployment.md).
 - **Comprehensive (up to 25 machines):** more orderers, CouchDB, monitoring,
   Ansible — Phase 4.
 

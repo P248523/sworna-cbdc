@@ -1,0 +1,55 @@
+# Bank-owner token services.
+#
+# Used by the commercial-bank VMs (and optionally for an all-in-one dev host).
+# Each bank runs only ITS owner node: Bank A VM -> `owner1`, Bank B VM -> `owner2`.
+# Run from token-services/:
+#
+#   docker compose -f docker-compose.bank.yaml up -d --build owner1   # Bank A host
+#   docker compose -f docker-compose.bank.yaml up -d --build owner2   # Bank B host
+#   docker compose -f docker-compose.bank.yaml up -d --build owner1 owner2  # all-in-one dev
+#
+# The owner nodes join the same external fabric_test network as the CB services
+# (auditor/issuer in docker-compose.yaml), so FSC hostnames resolve across hosts
+# that are all on the same docker network. Across real VMs you must publish the
+# P2P ports and add DNS/extra_hosts (docs/token-network/09-distributed-deployment.md).
+networks:
+  test:
+    name: fabric_test
+    external: true
+
+services:
+  owner1:
+    hostname: owner1.sworna.example.com
+    restart: always
+    build:
+      context: ./owner
+      dockerfile: ../Dockerfile
+    volumes:
+      - ./data/owner1:/var/fsc/data/owner1
+      - ./owner/conf/owner1:/conf:ro
+      - ./keys:/var/fsc/keys:ro
+      - ../network/organizations:/var/fsc/fabric/organizations:ro
+    ports:
+      - 9200:9000
+    expose:
+      - 9201
+    networks:
+      - test
+
+  owner2:
+    hostname: owner2.sworna.example.com
+    restart: always
+    build:
+      context: ./owner
+      dockerfile: ../Dockerfile
+    volumes:
+      - ./data/owner2:/var/fsc/data/owner2
+      - ./owner/conf/owner2:/conf:ro
+      - ./keys:/var/fsc/keys:ro
+      - ../network/organizations:/var/fsc/fabric/organizations:ro
+    ports:
+      - 9300:9000
+    expose:
+      - 9301
+    networks:
+      - test
