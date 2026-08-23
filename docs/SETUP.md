@@ -101,32 +101,32 @@ git clone https://github.com/sapienskid/sworna-cbdc.git ~/CBDC
 cd ~/CBDC
 ```
 
-### 2.2 Fabric binaries + images
+### 2.2 Fabric binaries + config + images
 
-The repo's `bin/` and `config/` are **symlinks** into a `fabric-samples`
-checkout that must live **inside** the repo root (the symlinks are relative):
+The repo owns real `bin/` and `config/` directories (no `fabric-samples`
+checkout is needed). Install the pinned Fabric tools directly:
 
 ```bash
-git clone https://github.com/hyperledger/fabric-samples.git ~/CBDC/fabric-samples
-cd ~/CBDC/fabric-samples
-git checkout 05edea01d4cf24dd4087bd3750c36e690dc4d6ff   # pinned, verified
-./install-fabric.sh -f 3.1.5 -c 1.5.22 docker binary
+cd ~/CBDC
+./scripts/install-fabric-tools.sh
 ```
 
-This downloads the Fabric binaries into `fabric-samples/bin` and pulls the
-Docker images (peer/orderer/ccenv **3.1.5**, ca **1.5.22**). It is the only
-large download in the whole setup.
+This downloads the Fabric **3.1.5** binaries + config and the CA **1.5.22**
+binaries into `bin/`/`config/`, and pulls the Docker images
+(`hyperledger/fabric-{peer,orderer,ccenv,baseos}:3.1.5`,
+`hyperledger/fabric-ca:1.5.22`). It is the only large download in the whole
+setup, and it is safe to re-run.
 
 ### 2.3 Verify the toolchain
 
 ```bash
 cd ~/CBDC
-ls -l bin config                # both symlinks resolve (no dangling arrows)
-bin/fabric-ca-client version    # works -> bin/ is good
+bin/fabric-ca-client version   # works -> bin/ is good
+ls config                      # configtx.yaml, core.yaml, orderer.yaml
 docker images | grep -E '3\.1\.5|1\.5\.22'
 ```
 
-Expected: `hyperledger/fabric-{peer,orderer,ccenv}:3.1.5` and
+Expected: `hyperledger/fabric-{peer,orderer,ccenv,baseos}:3.1.5` and
 `hyperledger/fabric-ca:1.5.22`.
 
 > **Note for AI agents:** the backend derives all repo paths from the file
@@ -328,7 +328,7 @@ Logins: CB `cbadmin`/`sworna-cb` · bank staff `banka_admin`/`bankb_admin`/
 | `no free wallets; provision more` | Bank's wallet pool exhausted. Run `POST /admin/banks/{code}/provision` (portal "Generate keys"). |
 | Engine containers restart / not healthy | Missing identities on a fresh clone. Ensure `token-services/keys/{issuer,auditor,owner1,owner2}/fsc` exist; re-run `deploy-centralbank.sh` (enroll step is idempotent) or `token-services/scripts/enroll-users.sh` manually. |
 | `docker compose` command not found | Compose v2 plugin not installed (§1.2). |
-| Provisioning fails with `fabric-ca-client failed` | `bin/` symlink broken or token CA not up. Check `ls -l ~/CBDC/bin` and `docker ps` for `ca_token_network`. |
+| Provisioning fails with `fabric-ca-client failed` | `bin/` not installed or token CA not up. Run `./scripts/install-fabric-tools.sh` and check `docker ps` for `ca_token_network`. |
 | CB portal "Ledger" page errors | Old hardcoded paths. Pull the latest `main` (path fix in `backend/app/paths.py`) and restart the backend. |
 | `account not found` | Account numbers look like `SWR-001-00000001` — paste exactly. |
 | OOM during `docker compose up --build` | Add swap (§1.5) or build engine images on a bigger host and `docker save`/`load`. |

@@ -20,7 +20,6 @@ dist/
 build/
 
 # Go (token-services/, chaincode build artifacts)
-bin/
 *.test
 *.out
 
@@ -35,8 +34,8 @@ network/organizations/ca/
 channel-artifacts/
 ledger-data/
 
-# Fabric samples clone (de-risking copy)
-fabric-samples/
+# Fabric samples clone (de-risking copy) — no longer used
+# fabric-samples/
 
 # CouchDB / DB data
 *.db
@@ -58,9 +57,9 @@ keys/
 # Logs
 *.log
 logs/
-# Machine-local symlinks (point at a fabric-samples checkout)
-bin
-config
+# Fabric binaries + config (installed by scripts/install-fabric-tools.sh)
+bin/
+config/
 
 # Provisioning client home (token CA)
 .ca-client/

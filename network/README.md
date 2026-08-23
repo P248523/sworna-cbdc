@@ -21,8 +21,8 @@ Raft in dev; more orderers in the lab/Phase 4).
 ./network.sh down                        # teardown
 ```
 
-Prerequisites: the Fabric binaries/images (see the root README), plus `bin` and
-`config` symlinks at the repo root pointing at a `fabric-samples` checkout.
+Prerequisites: the Fabric binaries/images installed into `bin/`/`config/` at
+the repo root (see the root README, or `./scripts/install-fabric-tools.sh`).
 
 ## Layout
 

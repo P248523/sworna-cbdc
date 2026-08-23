@@ -22,8 +22,8 @@ Customer machines   a browser only (the bank portal)
 | `scripts/deploy-banka.sh` | Bank A host | owner1 service + bank A portal |
 | `scripts/deploy-bankb.sh` | Bank B host | owner2 service + bank B portal |
 
-Every host clones the same repo, installs the Fabric binaries/images (`bin`/
-`config` symlinks at the repo root pointing at a `fabric-samples` checkout), then
+Every host clones the same repo, installs the Fabric binaries/images into the
+repo's own `bin/`/`config/` (`./scripts/install-fabric-tools.sh`), then
 runs its role script. The token engine's `keys/` folder — provisioned by the CB —
 is the **join bundle** that makes a bank's owner service valid. On a bank VM the
 bundle also includes the org crypto under `network/organizations/` (TLS certs +

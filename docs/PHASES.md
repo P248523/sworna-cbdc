@@ -41,7 +41,7 @@ This document is the master roadmap. Each phase has a goal, a task list, exit cr
 **Tasks**
 
 1. Install prerequisites on dev laptops: Docker 20+, Go 1.20+, `make`, `jq`, `curl`.
-2. Clone `hyperledger/fabric-samples`; run `install-fabric.sh docker binary` → Fabric **v3.1.x** images and Fabric **CA 1.5.7+** binaries.
+2. Install prerequisites on dev laptops: Docker 20+, Go 1.20+, `make`, `jq`, `curl`; install the Fabric tools via `./scripts/install-fabric-tools.sh` → Fabric **v3.1.x** binaries/images and Fabric **CA 1.5.x** binaries.
 3. Run the **token-sdk sample** end-to-end (`./scripts/up.sh`) on the default 2-org test network [R13][R3]:
    - Issue 1000 tokens → alice; transfer 100 → dan; redeem.
    - Verify **ZK behavior**: ledger does not reveal amounts or parties; the **auditor** can see them [R13].

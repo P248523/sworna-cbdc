@@ -14,23 +14,28 @@ Status: **PASSED (with one known blocker — see §5).** Verified 2026-08-22 on 
 
 | Component | Version / commit |
 |---|---|
-| `fabric-samples` | commit `05edea01d4cf24dd4087bd3750c36e690dc4d6ff` (main) |
-| Fabric peer / orderer / ccenv | **v3.1.5** (`hyperledger/fabric-{peer,orderer,ccenv}:3.1.5`) |
-| Fabric CA | **v1.5.22** |
-| `fabric-token-sdk` / `fabric-smart-client` | **v0.3.0** (in `token-sdk/{auditor,issuer,owner}/go.mod` + `tokenchaincode/Dockerfile`) |
+| Fabric binaries + images | **3.1.5** (installed by `scripts/install-fabric-tools.sh` into `bin/`/`config/`; images `hyperledger/fabric-{peer,orderer,ccenv,baseos}:3.1.5`) |
+| Fabric CA | **1.5.22** |
+| `fabric-token-sdk` / `fabric-smart-client` | **v0.3.0** (in `token-services/{auditor,issuer,owner}/go.mod` + `tokenchaincode/Dockerfile`) |
 | `tokengen` | v0.3.0 (`go install ...@v0.3.0`) |
-| Go toolchain | **1.24** (sample requires `go 1.24.0`) |
+| Go toolchain | **1.24** (the token engine builds in `golang:1.24` containers) |
+
+> No `fabric-samples` checkout is required (or kept). The Fabric binaries,
+> config and images are installed straight into the repo's own `bin/`/`config/`
+> and Docker by `scripts/install-fabric-tools.sh`.
 
 ### 2. Required build fixes (the sample does not build unmodified today)
 
-The sample's pinned dependency graph is broken under current Go/Docker toolchains. Four changes were required in the local `fabric-samples/token-sdk` copy:
+The sample's pinned dependency graph is broken under current Go/Docker toolchains. Four changes were required in the de-risking copy of `fabric-samples/token-sdk`:
 
 1. **Pin `quic-go` v0.38.1 + `qpack` v0.4.0** in `auditor/`, `issuer/`, `owner/` — the sample's go.mod recorded v0.49.1, which is incompatible with the SDKs' webtransport-go v0.5.3 / libp2p v0.31 pins.
 2. **Pin `gnark-crypto` v0.9.1** in all three modules — the sample recorded v0.18.1 (issuer/owner) and v0.12.1 (auditor); the IBM/mathlib + idemix stack requires v0.9.1 (`//go:linkname` to `bls12-381.g1Isogeny` breaks otherwise).
 3. **Fix `go.work`** from `go 1.23.0` → `go 1.24.0` (was inconsistent with the module `go 1.24.0` directives).
 4. **Pin `Dockerfile` + `tokenchaincode/Dockerfile`** base image `golang:latest` → `golang:1.24` (both build with `go build`, which fails on the current `golang:latest`).
 
-After each `go get` downgrade, run `go mod tidy` in each module to reconcile `go.sum`. These fixes live only in the local clone (gitignored), not in the repo — capture them when we fork the token layer in Phase 3.
+All four fixes are **baked into the owned fork** under `token-services/` (see
+[docs/token-network/05-engine-deep-dive.md](docs/token-network/05-engine-deep-dive.md)) —
+there is no `fabric-samples` checkout to patch.
 
 ### 3. Verified end-to-end (token-sdk sample, 2-org test network)
 
@@ -41,7 +46,12 @@ After each `go get` downgrade, run `go mod tidy` in each module to reconcile `go
 - **ZK privacy** ✅ — decoded ledger blocks 2–7 contain **no** plaintext amounts (1000/100/900), token code, party names, or messages. Only matches are the chaincode's internal `ztoken` namespace prefix and base64 coincidences inside encrypted payloads.
 - **Auditor oversight** ✅ — `/api/v1/auditor/accounts/alice/transactions` reveals full amounts, sender, and recipient (the auditor sees through the ZK).
 
-### 4. Running the sample (dev machine)
+### 4. Running the de-risking sample (Phase-2 record)
+
+> Historical: this exercised the unmodified `fabric-samples/token-sdk` sample on
+> its 2-org test network during de-risking. The `fabric-samples` checkout has
+> since been removed; the production flow is `scripts/install-fabric-tools.sh`
+> + `scripts/deploy-centralbank.sh` (see [docs/SETUP.md](docs/SETUP.md)).
 
 ```bash
 cd fabric-samples && ./install-fabric.sh -f 3.1.5 -c 1.5.22 docker binary
@@ -70,9 +80,9 @@ Recommendation: **Option 1** for the Phase-3 demo.
 Everything is owned in this repo. Bring-up (all-in-one dev laptop):
 
 ```bash
-# 1. binaries/images (one-time): fabric-samples/bin + config + images, plus
-#    `bin` and `config` symlinks at the repo root, and `tokengen` in ~/go/bin.
-#    See docs/SETUP.md §2 for the exact clone + install-fabric commands.
+# 1. binaries/images (one-time): Fabric 3.1.5 + CA 1.5.22 into bin/ + config/
+#    plus docker images. See docs/SETUP.md §2.
+./scripts/install-fabric-tools.sh
 
 # 2. full all-in-one bring-up (network + chaincode + identities + engine +
 #    backend + portal + bank wallet pools):
