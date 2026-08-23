@@ -15,6 +15,7 @@ from ..amounts import to_minor, to_swr
 from ..database import get_session
 from ..deps import cb_admin
 from ..models import Account, Bank, TransactionLog, User
+from ..paths import BIN, FABRIC_CFG, NETWORK_HOME
 from ..provisioning import ProvisioningError, provision_wallet_pool
 from ..schemas import AdminOverview, CirculationRow, IssueRequest, TxLogRead
 from ..token_client import TokenServiceError, token_client
@@ -45,11 +46,10 @@ class ProvisionResult(BaseModel):
 
 def _peer_env() -> dict:
     """Environment for the Fabric peer CLI against the sworna network."""
-    base = os.environ.get("SWORNA_NETWORK_HOME", "/run/media/sapiens/Development/CBDC/network")
-    orgs = Path(base) / "organizations"
+    orgs = Path(NETWORK_HOME) / "organizations"
     env = {
-        "PATH": f"{os.environ.get('SWORNA_BIN', '/run/media/sapiens/Development/CBDC/bin')}:" + os.environ.get("PATH", ""),
-        "FABRIC_CFG_PATH": os.environ.get("SWORNA_FABRIC_CFG", "/run/media/sapiens/Development/CBDC/config"),
+        "PATH": f"{BIN}:" + os.environ.get("PATH", ""),
+        "FABRIC_CFG_PATH": FABRIC_CFG,
         "CORE_PEER_TLS_ENABLED": "true",
         "CORE_PEER_LOCALMSPID": "CentralBankMSP",
         "CORE_PEER_ADDRESS": "localhost:7051",

@@ -1,6 +1,8 @@
 # DEMO — Scenario & runbook
 
-> **Status: v2 (banking).** Verified on the dev laptop 2026-08-22.
+> **Status: v2 (banking).** Verified on the dev laptop 2026-08-22. Requires the
+> token engine **including owner1/owner2** to be running (all-in-one host, or CB
+> + bank VMs). Setup: [SETUP.md](SETUP.md).
 
 ## Demo objective
 
@@ -25,11 +27,33 @@ A guided ~10-minute walkthrough of the two-tier banking system with ZK privacy:
 
 ## Running it
 
+Bring up **everything** (all-in-one host):
+
 ```bash
-./scripts/deploy-centralbank.sh      # bring up everything (dev)
-./scripts/demo.sh                    # issue → transfers → redeem
-# portals: http://localhost:5173  (cbadmin / banka_admin / bankb_admin / alice / eva)
+./scripts/deploy-centralbank.sh --provision   # network, chaincode, identities, issuer/auditor, backend, portal
+cd token-services && docker compose up -d --build owner1 owner2   # owners needed for transfers/redeem
+./scripts/demo.sh                             # issue → transfers → redeem
 ```
+
+> Without owner1/owner2 the demo cannot run — the CB-only deployment supports
+> provisioning and issuance setup, not retail transfers. Distributed banks:
+> run the bank deploy scripts on their own VMs instead of the owner step above.
+
+Portals (dev): `http://localhost:5173` with the path/route per portal —
+logins below. For the production-built 3-portal mode use
+`scripts/run-portals.sh` (ports 8081/8082/8083).
+
+## Accounts & logins
+
+| Account | Wallet | Owner |
+|---|---|---|
+| `SWR-001-00000001` (Alice Adhikari) | `alice` | owner1 (bank 001) |
+| `SWR-001-00000002` (Bob Basnet) | `bob` | owner1 (bank 001) |
+| `SWR-002-00000001` (Carlos Chhetri) | `carlos` | owner2 (bank 002) |
+| `SWR-002-00000002` (Dan Dhakal) | `dan` | owner2 (bank 002) |
+
+Logins: CB `cbadmin`/`sworna-cb` · bank staff `banka_admin`/`bankb_admin`/
+`sworna-bank` · customers `alice`/`bob`/`carlos`/`dan`/`sworna-pass`.
 
 ## Port map
 
@@ -49,7 +73,10 @@ A guided ~10-minute walkthrough of the two-tier banking system with ZK privacy:
   bootstrap (auditor) after restart; wait and retry.
 - **`no free wallets; provision more`** — run `POST /admin/banks/{code}/provision`
   from the CB portal to top up the bank's wallet pool.
+- **Engine keeps restarting on a fresh clone** — identities not enrolled. Run
+  `./scripts/deploy-centralbank.sh` again (enrolls automatically) or
+  `token-services/scripts/enroll-users.sh` once the token CA is up.
 - **Account not found** — account numbers look like `SWR-001-00000001` (bank
   code + 8 digits); paste exactly.
 - Full reset: `./network/network.sh down`, remove `token-services/{keys,data}`,
-  remove `backend/sworna.db`, re-run `deploy-centralbank.sh`.
+  remove `backend/sworna.db`, re-run `deploy-centralbank.sh --provision`.

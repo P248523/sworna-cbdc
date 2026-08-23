@@ -2,7 +2,7 @@
 
 **Sworna** is a prototype Central Bank Digital Currency (CBDC) system built on **Hyperledger Fabric**, modeling a two-tier retail + wholesale payment system for the **Nepali rupee** concept. The currency is represented on-ledger as **UTXO tokens protected by Zero-Knowledge Proofs** — amounts and parties remain hidden to the ledger while remaining provably valid, with a central-bank-operated **auditor** enforcing oversight.
 
-> **Project status: v2 — real banking system (working on the dev laptop).** 3-org Fabric settlement, ZK-private SWR, and now a banking layer: account numbers, per-bank portals, JWT auth, payments by account number (incl. cross-bank), CB provisioning (wallet-pool keys + permissions), and a shadcn/ui interface. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and [docs/token-network/](docs/token-network/).
+> **Project status: v2 — real banking system.** 3-org Fabric settlement, ZK-private SWR, and a banking layer: account numbers, per-bank portals, JWT auth, payments by account number (incl. cross-bank), CB provisioning (wallet-pool keys + permissions), and a shadcn/ui interface. The central-bank host is deployed on a Tailscale VM (`100.72.112.29`). **Setup for any host (CB or bank): [docs/SETUP.md](docs/SETUP.md).** See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and [docs/token-network/](docs/token-network/).
 
 ---
 
@@ -72,26 +72,27 @@ Everything is owned in this repo. Bring-up (all-in-one dev laptop):
 ```bash
 # 1. binaries/images (one-time): fabric-samples/bin + config + images, plus
 #    `bin` and `config` symlinks at the repo root, and `tokengen` in ~/go/bin.
+#    See docs/SETUP.md §2 for the exact clone + install-fabric commands.
 
-# 2. our 3-org network (centralbank + banka), channel `settlement`
-./network/network.sh up createChannel -ca
-#    bankb joins the channel
-./network/addOrg3/addOrg3.sh up
-#    deploy the ZK token chaincode to all 3 orgs
-./network/network.sh deployCCAAS -ccn tokenchaincode \
-    -ccp token-services/tokenchaincode -cci init -ccs 1
+# 2. full all-in-one bring-up (network + chaincode + identities + engine +
+#    backend + portal + bank wallet pools):
+./scripts/deploy-centralbank.sh --provision
 
-# 3. token engine (issuer/auditor/owner) wired to our network
-#    (first generate identities: see docs/token-network/05)
-cd token-services && docker-compose up -d --build
+# 3. owner nodes (needed for transfers/redeem; on bank VMs run the bank scripts):
+cd token-services && docker compose up -d --build owner1 owner2
 
-# 4. banking core + UI
-cd backend && .venv/bin/uvicorn app.main:app --port 8000 &
-cd web && npm run dev            # http://localhost:5173
-
-# 5. demo scenario
+# 4. demo scenario (issue -> transfers -> redeem)
 ./scripts/demo.sh
 ```
+
+Fresh clones are handled automatically: `token-services/keys/` is gitignored,
+so `deploy-centralbank.sh` enrolls the token identities once before starting
+the engine. The deploy scripts require Docker Compose v2, and all backend paths
+derive from the repo location (`backend/app/paths.py`). See
+[docs/SETUP.md](docs/SETUP.md) for the full runbook and per-role verification,
+and [docs/token-network/09-distributed-deployment.md](docs/token-network/09-distributed-deployment.md)
+for the distributed 3-VM topology (banks on their own hosts — currently being
+validated).
 
 See [docs/DEMO.md](docs/DEMO.md) for the runbook and [docs/token-network/](docs/token-network/) for how the token network works.
 
@@ -130,14 +131,16 @@ See [docs/DEMO.md](docs/DEMO.md) for the runbook and [docs/token-network/](docs/
 | [docs/OVERVIEW.md](docs/OVERVIEW.md) | **Team-facing plain-language overview** (no citations) — start here to explain the project to anyone |
 | [docs/PHASES.md](docs/PHASES.md) | The full phased roadmap: documentation → foundation → prototype demo → comprehensive system → performance/hardening → vision |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architectural design: two-tier model, UTXO + ZK, roles, network topology, transaction flows, deployment |
+| [docs/SETUP.md](docs/SETUP.md) | **Step-by-step host setup runbook** (agent-executable): preflight → clone → Fabric tools → CB bring-up → provisioning → bank bring-up → verification |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | How the single repo is deployed so machines act as central bank / banks / customers; ports, identity, 1→3→25-host progression |
+| [docs/DEMO.md](docs/DEMO.md) | Demo scenario and runbook (verified on the dev laptop) |
 | [docs/FULL-BANKING-SYSTEM.md](docs/FULL-BANKING-SYSTEM.md) | The complete banking-system subsystem map (ledger core, central bank, commercial bank, retail, compliance, infrastructure) |
 | [docs/API.md](docs/API.md) | REST API catalog: FastAPI banking layer + token-sdk service endpoints |
 | [docs/TEAM.md](docs/TEAM.md) | How the development team is divided: tracks, code ownership, API contracts, weekly plan |
-| [docs/DEMO.md](docs/DEMO.md) | Demo scenario and runbook (stub — completed during the prototype phase) |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Performance benchmarking methodology (Caliper) and Fabric-X evaluation notes (stub) |
 | [docs/REFERENCES.md](docs/REFERENCES.md) | Canonical bibliography of every source used for this plan |
 | [docs/ADRs/](docs/ADRs/) | Architecture Decision Records (0001–0009) |
+| [docs/token-network/](docs/token-network/) | How the token network works; `08-provisioning.md` = wallet pools & join bundles; `09-distributed-deployment.md` = 3-VM topology |
 
 ## How to read this repository
 

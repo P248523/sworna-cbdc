@@ -17,13 +17,10 @@ from pathlib import Path
 import yaml
 
 from .models import Bank
+from .paths import BIN, TOKEN_SERVICES
 
 TOKEN_CA_URL = os.getenv("SWORNA_TOKEN_CA", "http://localhost:27054")
 TOKEN_CA_ADMIN = os.getenv("SWORNA_TOKEN_CA_ADMIN", "admin:adminpw")
-BIN = os.getenv("SWORNA_BIN", "/run/media/sapiens/Development/CBDC/bin")
-TOKEN_SERVICES = os.getenv(
-    "SWORNA_TOKEN_SERVICES", "/run/media/sapiens/Development/CBDC/token-services"
-)
 OWNER_CONF_DIR = Path(TOKEN_SERVICES) / "owner" / "conf"
 KEYS_DIR = Path(TOKEN_SERVICES) / "keys"
 CA_CLIENT_HOME = Path(

@@ -28,8 +28,20 @@ echo "==> [3/5] Token chaincode on all 3 orgs"
 
 echo "==> [4/5] Token engine (issuer, auditor)"
 cd "$ROOT/token-services"
-docker-compose -f compose-ca.yaml up -d          # token CA (idemix issuer)
-docker-compose up -d --build issuer auditor
+docker compose -f compose-ca.yaml up -d          # token CA (idemix issuer)
+
+# A fresh clone has no identities (keys/ is gitignored). Enroll the FSC node
+# identities + demo wallets once, before the engine starts.
+if [ ! -d "$ROOT/token-services/keys/issuer/fsc" ]; then
+  echo "==> enrolling token identities (fsc nodes + demo wallets)"
+  for i in $(seq 1 30); do
+    if curl -sf http://localhost:27054/cainfo >/dev/null 2>&1; then break; fi
+    sleep 2
+  done
+  ./scripts/enroll-users.sh
+fi
+
+docker compose up -d --build issuer auditor
 
 if [ "${1:-}" = "--provision" ]; then
   echo "==> provisioning wallet pools for banks 001/002"

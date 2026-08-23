@@ -29,9 +29,15 @@ else
   exit 1
 fi
 
+if [ ! -d "$ROOT/network/organizations/peerOrganizations/banka.sworna.example.com" ]; then
+  echo "   COPY the org crypto from the CB into"
+  echo "   $ROOT/network/organizations  (peerOrganizations/banka.* + ordererOrganizations) then re-run."
+  exit 1
+fi
+
 echo "==> token engine (owner ${OWNER_NODE})"
 cd "$ROOT/token-services"
-docker-compose up -d --build owner${OWNER_NODE##*owner}
+docker compose up -d --build owner${OWNER_NODE##*owner}
 
 echo "==> bank portal"
 cd "$ROOT/web"
